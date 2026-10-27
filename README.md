@@ -15,7 +15,7 @@ This automatically verifies Python 3.10+, provisions the virtual environment in 
 
 ### Option B: Manual Setup (Windows / macOS / Linux)
 
-1. **Clone and navigate to the project directory:**
+1. **Navigate to the project directory:**
    ```bash
    cd manufacturing_ml_suite
    ```
@@ -69,7 +69,7 @@ python run_api.py --mode supplier --port 8001
 
 ---
 
-## 3. Serialized Pickle Models (`models/*.pkl`)
+## 3. Serialized Machine Learning Models (`models/*.pkl`)
 
 All trained machine learning models are serialized in `models/` as standard Python pickle files for fast, in-memory inference without needing to re-train on raw datasets:
 
@@ -82,7 +82,7 @@ All trained machine learning models are serialized in `models/` as standard Pyth
 | `models/downstream_impact_forecaster.pkl` | `DownstreamImpactForecaster` | **Tier 2 (Q6):** Downstream Scrap Volume & Defect Severity Regressors |
 | `models/adaptive_parameter_compensator.pkl` | `AdaptiveParameterCompensator` | **Tier 2 (Q7):** Physics-Informed Closed-Loop Parameter Offsets |
 
-### Using Pickle Models Directly in Python
+### Loading and Using Models in Python
 You can load all models in 3 lines of code:
 ```python
 from src.models import load_all_models
@@ -112,19 +112,18 @@ compensator = models["adaptive_parameter_compensator"]
 
 ## 4. API Key Authentication & Governance
 
-All supplier and vendor endpoints (`/api/v1/supplier/...`) require authentication using API keys stored securely in `data/api_keys.json`.
+Supplier and vendor endpoints (`/api/v1/supplier/...`) require authentication using API keys configured in the application.
 
-### Active Pre-Configured Test Keys:
-- **Enterprise Admin Master Key:** `fs-admin-master-2026-99x` (Role: `admin` — allows key creation, listing, and revoking)
-- **Vendor B Key:** `fs-key-vendor-b-3e7a9d0f` (Role: `supplier` — associated with VENDOR_B)
-- **Vendor A Key:** `fs-key-vendor-a-8f4b2c1d` (Role: `supplier` — associated with VENDOR_A)
-- **Vendor C Key:** `fs-key-vendor-c-5b1c8e2a` (Role: `supplier` — associated with VENDOR_C)
-- **Demo Partner Key:** `fs-demo-partner-quality-2026` (Role: `partner`)
+### Authentication Methods
+The API key can be passed using any of the following supported methods:
+- **Header:** `X-API-Key: <your_key>`
+- **Authorization Header:** `Authorization: Bearer <your_key>`
+- **Query Parameter:** `?api_key=<your_key>`
 
-### Sending Authentication:
-Pass via header `X-API-Key: <key>`, `Authorization: Bearer <key>`, or query parameter `?api_key=<key>`.
+Refer to [`API_DOCUMENTATION.md`](API_DOCUMENTATION.md) for complete details on every endpoint, schemas, and payload examples.
 
-See [`API_DOCUMENTATION.md`](API_DOCUMENTATION.md) for complete details on every endpoint, schemas, and payload examples.
+> [!NOTE]
+> **Security Note:** Do not commit real API keys or production credentials to a public GitHub repository. Store production secrets in environment variables or a dedicated secrets manager. For local testing, pre-configured local sandbox keys are defined in `data/api_keys.json`.
 
 ---
 
@@ -138,19 +137,33 @@ Or on Windows:
 ```cmd
 run_dashboard.bat
 ```
-Access the dashboard at `http://localhost:8501`.
+Access the dashboard in your web browser at:
+```
+http://localhost:8501
+```
 
 ---
 
-## 6. End-to-End System Cross-Verification
+## 6. End-to-End System Verification
 
 Run the automated verification test suite:
 ```bash
 python verify_system.py
 ```
-Checks:
+
+Automated verification suite checks:
 - Virtual environment (`venv/`) and required package dependencies
-- Integrity and inference of all 6 serialized pickle models
-- API key validation, security rejection, role-based access control, and dynamic key lifecycles
-- All FastAPI endpoints (health, simulation, material evaluation, supplier profiles, claim traceability, tolerance leakage gap, and 8D SCAR reports)
+- Integrity and inference of all 6 serialized machine learning models
+- API key validation, security rejection, and role-based access control (RBAC)
+- FastAPI application and health endpoints
+- Simulation and material evaluation pipeline
+- Supplier profiles and warranty claim forensic traceability
+- Tolerance leakage gap analysis
+- 8D Supplier Corrective Action Request (SCAR) reports
 - Client SDK integration (`SupplierAPIClient`)
+
+---
+
+## 7. Project Repository
+
+- **GitHub:** [https://github.com/Gayatrisamanvita/Manuifacturing](https://github.com/Gayatrisamanvita/Manuifacturing)
