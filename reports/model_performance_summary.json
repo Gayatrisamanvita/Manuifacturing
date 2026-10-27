@@ -1,0 +1,395 @@
+{
+  "timestamp": "2026-10-14 05:25:44",
+  "tier1_manufacturing": {
+    "q1_defect_count_and_station_ranking": {
+      "metrics": {
+        "mae": 8.820197420729057,
+        "rmse": 12.804669456592196,
+        "r2": 0.20336019203280664
+      },
+      "sample_station_ranking": [
+        {
+          "station_id": "ST-20",
+          "predicted_defect_count": 64.4,
+          "risk_level": "HIGH",
+          "station_rank": 1
+        },
+        {
+          "station_id": "ST-30",
+          "predicted_defect_count": 64.2,
+          "risk_level": "HIGH",
+          "station_rank": 2
+        },
+        {
+          "station_id": "ST-10",
+          "predicted_defect_count": 63.4,
+          "risk_level": "HIGH",
+          "station_rank": 3
+        },
+        {
+          "station_id": "ST-40",
+          "predicted_defect_count": 63.4,
+          "risk_level": "HIGH",
+          "station_rank": 4
+        }
+      ]
+    },
+    "q4_q2_failure_mode_and_shap_contributors": {
+      "metrics": {
+        "accuracy": 0.9969166666666667,
+        "macro_f1": 0.8310966972044627,
+        "classes": [
+          "DIMENSIONAL_DRIFT",
+          "HYDRAULIC_PRESSURE_DROP",
+          "INCOMPLETE_FASTENING",
+          "NONE",
+          "OPERATOR_TIMING_ERROR",
+          "SURFACE_FLAW",
+          "THREAD_WEAR"
+        ]
+      },
+      "sample_shap_attributions": [
+        {
+          "predicted_failure_mode": "INCOMPLETE_FASTENING",
+          "confidence": 0.9997,
+          "top_physical_contributors": [
+            {
+              "feature": "spindle_temp_c",
+              "value": 88.08,
+              "shap_impact": 7.3559,
+              "direction": "RISK_INFLATING"
+            },
+            {
+              "feature": "torque_status_nok",
+              "value": 1.0,
+              "shap_impact": 1.262,
+              "direction": "RISK_INFLATING"
+            },
+            {
+              "feature": "peak_torque_nm",
+              "value": 13.27,
+              "shap_impact": -0.9051,
+              "direction": "PROTECTIVE"
+            },
+            {
+              "feature": "thermal_vibration_index",
+              "value": 17.7,
+              "shap_impact": -0.1832,
+              "direction": "PROTECTIVE"
+            },
+            {
+              "feature": "tool_wear_index",
+              "value": 0.35,
+              "shap_impact": 0.1042,
+              "direction": "RISK_INFLATING"
+            }
+          ]
+        },
+        {
+          "predicted_failure_mode": "INCOMPLETE_FASTENING",
+          "confidence": 0.9997,
+          "top_physical_contributors": [
+            {
+              "feature": "spindle_temp_c",
+              "value": 92.32,
+              "shap_impact": 8.1104,
+              "direction": "RISK_INFLATING"
+            },
+            {
+              "feature": "peak_torque_nm",
+              "value": 12.73,
+              "shap_impact": -0.5906,
+              "direction": "PROTECTIVE"
+            },
+            {
+              "feature": "torque_status_nok",
+              "value": 0.0,
+              "shap_impact": -0.1528,
+              "direction": "PROTECTIVE"
+            },
+            {
+              "feature": "torque_status_high",
+              "value": 0.0,
+              "shap_impact": -0.0652,
+              "direction": "PROTECTIVE"
+            },
+            {
+              "feature": "tool_wear_index",
+              "value": 1.28,
+              "shap_impact": 0.0537,
+              "direction": "RISK_INFLATING"
+            }
+          ]
+        },
+        {
+          "predicted_failure_mode": "INCOMPLETE_FASTENING",
+          "confidence": 0.9996,
+          "top_physical_contributors": [
+            {
+              "feature": "spindle_temp_c",
+              "value": 85.92,
+              "shap_impact": 8.1855,
+              "direction": "RISK_INFLATING"
+            },
+            {
+              "feature": "peak_torque_nm",
+              "value": 11.7,
+              "shap_impact": -0.6228,
+              "direction": "PROTECTIVE"
+            },
+            {
+              "feature": "torque_status_nok",
+              "value": 0.0,
+              "shap_impact": -0.1505,
+              "direction": "PROTECTIVE"
+            },
+            {
+              "feature": "torque_status_high",
+              "value": 0.0,
+              "shap_impact": -0.0656,
+              "direction": "PROTECTIVE"
+            },
+            {
+              "feature": "hydraulic_thermal_ratio",
+              "value": 1.33,
+              "shap_impact": 0.0554,
+              "direction": "RISK_INFLATING"
+            }
+          ]
+        }
+      ]
+    },
+    "q3_prescriptive_adjustments": {
+      "action_code": "RECALIBRATE_TOOL",
+      "urgency": "HIGH - BEFORE NEXT BATCH",
+      "recommended_task": "Recalibrate torque shutoff sensor and inspect fastener thread engagement depth.",
+      "prescriptive_recipe_offsets": {
+        "torque_offset_nm": -0.9,
+        "shutoff_angle_offset_deg": 92.0,
+        "rundown_speed_reduction_pct": 10.0
+      },
+      "root_driver": "spindle_temp_c"
+    }
+  },
+  "tier2_materials": {
+    "q5_marginal_batch_risk": {
+      "roc_auc": 0.8030303030303029,
+      "f1_score": 0.8
+    },
+    "q6_downstream_impact_forecast": {
+      "expected_defect_severity": 2.29,
+      "expected_scrap_count": 253,
+      "likely_downstream_failure_mode": "INCOMPLETE_FASTENING",
+      "physical_root_cause": "Excessive material hardness causing high fastening torque resistance before target shutoff angle is reached.",
+      "projected_cost_usd": 13890.33
+    },
+    "q7_adaptive_compensation": {
+      "status": "ACTIVE_COMPENSATION_HARD_STOCK",
+      "material_hardness_hv": 224.5,
+      "hardness_deviation_from_nominal": 19.5,
+      "prescribed_torque_target_nm": 12.88,
+      "prescribed_shutoff_angle_deg": 371.4,
+      "torque_offset_nm": 0.38,
+      "angle_offset_deg": 11.4,
+      "spindle_speed_offset_pct": -7.6,
+      "feed_rate_offset_pct": -5.0,
+      "coolant_lubrication_mode": "ENABLE_HIGH_PRESSURE_MIST",
+      "engineering_guidance": "Batch hardness is +19.5 HV above nominal. Applying torque offset of +0.38 Nm and speed reduction of -7.6% to eliminate incomplete fastening risk."
+    }
+  },
+  "tier3_supplier": {
+    "q8_supplier_quality_trends": {
+      "VENDOR_A": {
+        "supplier_id": "VENDOR_A",
+        "current_defect_rate_pct": 5.68,
+        "historical_trend": "INCREASING",
+        "defect_rate_series": [
+          2.95,
+          3.34,
+          5.41,
+          3.49,
+          5.95,
+          5.68
+        ],
+        "snapshot_dates": [
+          "2025-03-07",
+          "2025-05-06",
+          "2025-07-05",
+          "2025-09-03",
+          "2025-11-02",
+          "2026-01-01"
+        ],
+        "top_recurring_failure_modes": {
+          "SURFACE_FLAW": 2,
+          "NONE": 2,
+          "THREAD_WEAR": 1,
+          "INCOMPLETE_FASTENING": 1
+        },
+        "total_capa_recurrence_count": 30,
+        "batch_counts": {
+          "total_batches": 71,
+          "marginal_high": 2,
+          "marginal_low": 1,
+          "normal": 68
+        },
+        "total_internal_scrap": 12122,
+        "total_chargebacks_usd": 559505.03,
+        "total_warranty_claims": 367,
+        "total_warranty_cost_usd": 559505.03,
+        "total_financial_impact_usd": 1119010.06,
+        "risk_rating": "HIGH_RISK"
+      },
+      "VENDOR_B": {
+        "supplier_id": "VENDOR_B",
+        "current_defect_rate_pct": 12.85,
+        "historical_trend": "DECREASING",
+        "defect_rate_series": [
+          14.91,
+          15.09,
+          12.79,
+          12.95,
+          14.9,
+          12.85
+        ],
+        "snapshot_dates": [
+          "2025-03-07",
+          "2025-05-06",
+          "2025-07-05",
+          "2025-09-03",
+          "2025-11-02",
+          "2026-01-01"
+        ],
+        "top_recurring_failure_modes": {
+          "INCOMPLETE_FASTENING": 4,
+          "SURFACE_FLAW": 2
+        },
+        "total_capa_recurrence_count": 28,
+        "batch_counts": {
+          "total_batches": 70,
+          "marginal_high": 20,
+          "marginal_low": 2,
+          "normal": 48
+        },
+        "total_internal_scrap": 15129,
+        "total_chargebacks_usd": 750852.7,
+        "total_warranty_claims": 476,
+        "total_warranty_cost_usd": 750852.7,
+        "total_financial_impact_usd": 1501705.4,
+        "risk_rating": "HIGH_RISK"
+      },
+      "VENDOR_C": {
+        "supplier_id": "VENDOR_C",
+        "current_defect_rate_pct": 2.59,
+        "historical_trend": "DECREASING",
+        "defect_rate_series": [
+          2.61,
+          2.7,
+          5.42,
+          6.27,
+          4.92,
+          2.59
+        ],
+        "snapshot_dates": [
+          "2025-03-07",
+          "2025-05-06",
+          "2025-07-05",
+          "2025-09-03",
+          "2025-11-02",
+          "2026-01-01"
+        ],
+        "top_recurring_failure_modes": {
+          "THREAD_WEAR": 4,
+          "INCOMPLETE_FASTENING": 1,
+          "SURFACE_FLAW": 1
+        },
+        "total_capa_recurrence_count": 30,
+        "batch_counts": {
+          "total_batches": 58,
+          "marginal_high": 0,
+          "marginal_low": 0,
+          "normal": 58
+        },
+        "total_internal_scrap": 9157,
+        "total_chargebacks_usd": 411485.34,
+        "total_warranty_claims": 272,
+        "total_warranty_cost_usd": 411485.34,
+        "total_financial_impact_usd": 822970.68,
+        "risk_rating": "HIGH_RISK"
+      }
+    },
+    "q9_sample_claim_trace": {
+      "claim_id": "CLM-2026-00001",
+      "claim_cost_usd": 150.0,
+      "claim_date": "2026-01-11",
+      "part_serial_no": "SN-9988-207569",
+      "fastener_cycle_id": "TORQ-2026-207569",
+      "station_id": "ST-10",
+      "torque_telemetry": {
+        "peak_torque_nm": 14.01,
+        "shutoff_angle_deg": 181.8,
+        "torque_status": "NOK_HIGH"
+      },
+      "inspection_result": {
+        "in_plant_defect_flag": 1,
+        "defect_severity": 3,
+        "failure_mode": "INCOMPLETE_FASTENING"
+      },
+      "material_genealogy": {
+        "material_batch_id": "LOT-2026-RAW-177",
+        "supplier_id": "VENDOR_B",
+        "material_hardness_hv": 227.33,
+        "tensile_strength_mpa": 750.0,
+        "batch_risk_status": "MARGINAL_HIGH"
+      }
+    },
+    "q10_tolerance_leakage_gap_analysis": {
+      "current_spec_limits": {
+        "lower_spec_limit_hv": 180.0,
+        "upper_spec_limit_hv": 230.0,
+        "nominal_center_hv": 205.0
+      },
+      "tolerance_leakage_zone": {
+        "band_definition": "216.0 HV <= Hardness <= 230.0 HV",
+        "status": "Nominally Accepted at Receiving QC, Disproportionate Field Failure",
+        "affected_batches_count": 35,
+        "pct_of_total_batches": 17.6,
+        "claims_generated": 277,
+        "warranty_dollars_leaked": 438746.58,
+        "share_of_total_warranty_pct": 25.48,
+        "in_plant_scrap_multiplier": 1.64
+      },
+      "safe_core_process_zone": {
+        "band_definition": "195.0 HV <= Hardness < 216.0 HV",
+        "warranty_dollars": 1246653.67,
+        "claims_count": 812
+      },
+      "recommended_tightened_specs": {
+        "revised_upper_spec_limit_hv": 216.0,
+        "revised_lower_spec_limit_hv": 195.0,
+        "projected_annual_warranty_savings_usd": 372934.59,
+        "scrap_reduction_pct": 52.4,
+        "justification": "Batches between 216 HV and 230 HV represent only 35 batches but cause $438,746.58 (25.5%) in field failures. Tightening receiving USL to 216.0 HV eliminates this leakage vector."
+      }
+    },
+    "q11_financial_recovery_summary": {
+      "VENDOR_A": {
+        "in_plant_scrap_recovery_usd": 666710.0,
+        "contractual_chargebacks_usd": 559505.03,
+        "field_warranty_recovery_usd": 559505.03,
+        "total_demand_amount_usd": 1785720.06
+      },
+      "VENDOR_B": {
+        "in_plant_scrap_recovery_usd": 832095.0,
+        "contractual_chargebacks_usd": 750852.7,
+        "field_warranty_recovery_usd": 750852.7,
+        "total_demand_amount_usd": 2333800.4
+      },
+      "VENDOR_C": {
+        "in_plant_scrap_recovery_usd": 503635.0,
+        "contractual_chargebacks_usd": 411485.34,
+        "field_warranty_recovery_usd": 411485.34,
+        "total_demand_amount_usd": 1326605.68
+      }
+    }
+  }
+}

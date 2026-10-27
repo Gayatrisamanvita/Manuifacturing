@@ -1,0 +1,140 @@
+{
+  "keys": [
+    {
+      "key_id": "key_admin_01",
+      "key": "fs-admin-master-2026-99x",
+      "client_name": "Enterprise Quality Administrator",
+      "supplier_id": "ALL",
+      "role": "admin",
+      "permissions": [
+        "all"
+      ],
+      "status": "ACTIVE",
+      "created_at": "2026-10-26T05:30:00Z",
+      "last_used_at": "2026-10-27T09:16:00.133013Z",
+      "request_count": 3
+    },
+    {
+      "key_id": "key_vendor_a",
+      "key": "fs-key-vendor-a-8f4b2c1d",
+      "client_name": "Vendor A Quality Team",
+      "supplier_id": "VENDOR_A",
+      "role": "supplier",
+      "permissions": [
+        "evaluate_lot",
+        "forecast_impact",
+        "adaptive_recipe",
+        "catalog",
+        "scar"
+      ],
+      "status": "ACTIVE",
+      "created_at": "2026-10-26T05:30:00Z",
+      "last_used_at": null,
+      "request_count": 0
+    },
+    {
+      "key_id": "key_vendor_b",
+      "key": "fs-key-vendor-b-3e7a9d0f",
+      "client_name": "Vendor B Quality Team",
+      "supplier_id": "VENDOR_B",
+      "role": "supplier",
+      "permissions": [
+        "evaluate_lot",
+        "forecast_impact",
+        "adaptive_recipe",
+        "catalog",
+        "scar"
+      ],
+      "status": "ACTIVE",
+      "created_at": "2026-10-26T05:30:00Z",
+      "last_used_at": "2026-10-27T09:16:00.126558Z",
+      "request_count": 10
+    },
+    {
+      "key_id": "key_vendor_c",
+      "key": "fs-key-vendor-c-5b1c8e2a",
+      "client_name": "Vendor C Quality Team",
+      "supplier_id": "VENDOR_C",
+      "role": "supplier",
+      "permissions": [
+        "evaluate_lot",
+        "forecast_impact",
+        "adaptive_recipe",
+        "catalog",
+        "scar"
+      ],
+      "status": "ACTIVE",
+      "created_at": "2026-10-26T05:30:00Z",
+      "last_used_at": null,
+      "request_count": 0
+    },
+    {
+      "key_id": "key_demo_partner",
+      "key": "fs-demo-partner-quality-2026",
+      "client_name": "Partner Quality Integration (Demo)",
+      "supplier_id": "ALL",
+      "role": "partner",
+      "permissions": [
+        "evaluate_lot",
+        "forecast_impact",
+        "adaptive_recipe",
+        "catalog",
+        "tolerance_gap"
+      ],
+      "status": "ACTIVE",
+      "created_at": "2026-10-26T05:30:00Z",
+      "last_used_at": "2026-10-27T09:15:58.032589Z",
+      "request_count": 2
+    },
+    {
+      "key_id": "key_e260c6fc",
+      "key": "fs-key-vendor_a-7506ec17361a",
+      "client_name": "Global Powertrain Tier 1 Partner",
+      "supplier_id": "VENDOR_A",
+      "role": "partner",
+      "permissions": [
+        "evaluate_lot",
+        "forecast_impact",
+        "adaptive_recipe"
+      ],
+      "status": "ACTIVE",
+      "created_at": "2026-10-26T05:40:55.387176Z",
+      "last_used_at": null,
+      "request_count": 0
+    },
+    {
+      "key_id": "key_c0faae91",
+      "key": "fs-key-vendor_t-a312471056a6",
+      "client_name": "Automated Test Quality Bot",
+      "supplier_id": "VENDOR_TEST",
+      "role": "partner",
+      "permissions": [
+        "evaluate_lot",
+        "forecast_impact",
+        "adaptive_recipe"
+      ],
+      "status": "REVOKED",
+      "created_at": "2026-10-27T09:14:27.003000Z",
+      "last_used_at": null,
+      "request_count": 0,
+      "revoked_at": "2026-10-27T09:14:27.005779Z"
+    },
+    {
+      "key_id": "key_fe68db8c",
+      "key": "fs-key-vendor_t-21ebdf55ea81",
+      "client_name": "Automated Test Quality Bot",
+      "supplier_id": "VENDOR_TEST",
+      "role": "partner",
+      "permissions": [
+        "evaluate_lot",
+        "forecast_impact",
+        "adaptive_recipe"
+      ],
+      "status": "REVOKED",
+      "created_at": "2026-10-27T09:15:58.035912Z",
+      "last_used_at": null,
+      "request_count": 0,
+      "revoked_at": "2026-10-27T09:15:58.038333Z"
+    }
+  ]
+}

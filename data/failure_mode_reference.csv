@@ -1,0 +1,9 @@
+failure_mode,physical_defect_trigger,primary_data_source,4m_category
+NONE,Within standard tolerance band,INSPECTION_CAMERA,METHOD
+THREAD_WEAR,Tool wear exceeding upper threshold,TORQUE_TRANSDUCER,MACHINE
+INCOMPLETE_FASTENING,Torque cut-off prior to angle limit,TORQUE_TRANSDUCER,MACHINE
+DIMENSIONAL_DRIFT,Raw material dimension variance,SPECTROMETRY,MATERIAL
+SURFACE_FLAW,Vibration chatter marks,ACCELEROMETER,MACHINE
+HYDRAULIC_PRESSURE_DROP,Station hydraulic unit low psi,PRESSURE_SENSOR,MACHINE
+MATERIAL_HARDNESS_OUT_OF_SPEC,Batch hardness outside spec limit,HARDNESS_TESTER,MATERIAL
+OPERATOR_TIMING_ERROR,Indexing misfire during manual fixture,CYCLE_COUNTER,MAN

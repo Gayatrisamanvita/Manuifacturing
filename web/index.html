@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PrecisionPulse AI - Manufacturing, Material & Supplier Intelligence Suite</title>
+  <meta name="description" content="Industrial machine learning and prescriptive intelligence suite answering all 11 core manufacturing, material, and supplier quality questions with real-time SHAP explainability, prescriptive recipe compensation, and automated SCAR recovery.">
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚙️</text></svg>">
+  <!-- Chart.js for smooth canvas visualizations -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header" id="main-header">
+      <div class="brand-wrapper">
+        <div class="logo-orb" id="brand-logo" aria-hidden="true">⚡</div>
+        <div class="brand-text">
+          <h1 id="app-title">PrecisionPulse AI™ Intelligence Suite</h1>
+          <p id="app-subtitle">Manufacturing Operations • Raw Materials • Supplier Quality & SCAR Recovery</p>
+        </div>
+      </div>
+      <div class="header-status">
+        <div class="badge badge-live" id="badge-system-status">
+          <span class="pulse-dot"></span>
+          <span>System Online • 236,160 Operational Records</span>
+        </div>
+        <div class="badge badge-neutral" id="badge-model-accuracy">
+          <span>Classifier Acc: <strong>99.69%</strong></span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Global Tolerance Leakage Alert Banner -->
+    <div class="banner-alert" id="banner-tolerance-leakage" role="alert">
+      <div class="banner-alert-content">
+        <span class="banner-icon" aria-hidden="true">⚠️</span>
+        <div>
+          <div class="banner-title">Receiving Inspection Tolerance Leakage Detected (Q10)</div>
+          <div class="banner-desc">Batches in the 216.0–230.0 HV band nominally passed incoming QC but caused <strong>$438,746.58</strong> in field warranty claims (25.5% of total). Recommended USL tightening: 230 → 216 HV.</div>
+        </div>
+      </div>
+      <button class="btn-secondary" id="btn-view-gap-analysis" onclick="switchTab('tab-tier3')">View Gap Analysis</button>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <nav class="nav-tabs" aria-label="Main Navigation">
+      <button class="nav-tab-btn active" id="tab-btn-overview" onclick="switchTab('tab-overview')">
+        <span>📊</span> Executive Overview & Recovery
+      </button>
+      <button class="nav-tab-btn" id="tab-btn-tier1" onclick="switchTab('tab-tier1')">
+        <span>⚙️</span> Tier 1: Manufacturing & Drift
+      </button>
+      <button class="nav-tab-btn" id="tab-btn-tier2" onclick="switchTab('tab-tier2')">
+        <span>🔬</span> Tier 2: Material Intelligence
+      </button>
+      <button class="nav-tab-btn" id="tab-btn-tier3" onclick="switchTab('tab-tier3')">
+        <span>📑</span> Tier 3: Supplier & SCAR Suite
+      </button>
+    </nav>
+
+    <!-- Digital Twin Factory Floor Line (Accessible across all tabs) -->
+    <section class="factory-floor" id="section-factory-floor" aria-labelledby="heading-factory-floor">
+      <div class="factory-floor-title">
+        <h2 id="heading-factory-floor" style="font-family: var(--font-heading); font-size: 15px; font-weight: 700; color: #ffffff; display: flex; align-items: center; gap: 8px;">
+          <span>🏭</span> Factory Digital Twin — Active Assembly Line Telemetry
+        </h2>
+        <span class="badge badge-neutral">Active Shift: <strong>SHIFT_1</strong> • Cycle Rate: 47.2 UPM</span>
+      </div>
+      <div class="station-track">
+        <!-- Station 10 -->
+        <div class="station-node" id="node-ST-10" onclick="selectStation('ST-10')">
+          <div class="station-node-header">
+            <span class="station-node-id">Station ST-10</span>
+            <span class="station-beacon beacon-amber" title="Status: Elevated Risk"></span>
+          </div>
+          <div class="station-node-role">Pre-Fastening Alignment</div>
+          <div class="station-node-stats">
+            <span>Pred. Defects: <strong>63.4</strong></span>
+            <span>Spindle: <strong>55.1°C</strong></span>
+          </div>
+        </div>
+
+        <!-- Station 20 -->
+        <div class="station-node active-station" id="node-ST-20" onclick="selectStation('ST-20')">
+          <div class="station-node-header">
+            <span class="station-node-id">Station ST-20</span>
+            <span class="station-beacon beacon-red" title="Status: High Risk Drift"></span>
+          </div>
+          <div class="station-node-role">Main High-Torque Rundown</div>
+          <div class="station-node-stats">
+            <span>Pred. Defects: <strong class="text-rose">64.4 (#1)</strong></span>
+            <span>Torque: <strong class="text-cyan">13.4 Nm</strong></span>
+          </div>
+        </div>
+
+        <!-- Station 30 -->
+        <div class="station-node" id="node-ST-30" onclick="selectStation('ST-30')">
+          <div class="station-node-header">
+            <span class="station-node-id">Station ST-30</span>
+            <span class="station-beacon beacon-red" title="Status: High Risk Drift"></span>
+          </div>
+          <div class="station-node-role">Torque Inspection & Seating</div>
+          <div class="station-node-stats">
+            <span>Pred. Defects: <strong class="text-rose">64.2 (#2)</strong></span>
+            <span>Wear: <strong class="text-amber">52%</strong></span>
+          </div>
+        </div>
+
+        <!-- Station 40 -->
+        <div class="station-node" id="node-ST-40" onclick="selectStation('ST-40')">
+          <div class="station-node-header">
+            <span class="station-node-id">Station ST-40</span>
+            <span class="station-beacon beacon-green" title="Status: Normal Operations"></span>
+          </div>
+          <div class="station-node-role">Final Dimensional Verification</div>
+          <div class="station-node-stats">
+            <span>Pred. Defects: <strong>63.4</strong></span>
+            <span>Vibration: <strong>1.4g</strong></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================== -->
+    <!-- TAB 1: EXECUTIVE OVERVIEW -->
+    <!-- ============================================================== -->
+    <main>
+      <section id="tab-overview" class="tab-content active" aria-labelledby="tab-btn-overview">
+        <!-- 4 Top KPI Cards -->
+        <div class="grid-cards-4">
+          <div class="card stat-card" id="kpi-financial-claim">
+            <div class="stat-icon" aria-hidden="true">💰</div>
+            <div class="stat-label">Total Recoverable Demand</div>
+            <div class="stat-value text-rose" id="val-total-demand">$5,446,126</div>
+            <div class="stat-subtext text-muted">Across 3 Primary Vendors (SCAR 8D)</div>
+          </div>
+          <div class="card stat-card" id="kpi-warranty-cost">
+            <div class="stat-icon" aria-hidden="true">🛡️</div>
+            <div class="stat-label">Field Warranty Claims</div>
+            <div class="stat-value text-amber" id="val-total-warranty">$1,721,843</div>
+            <div class="stat-subtext text-muted">1,115 Traceable Parts Logged</div>
+          </div>
+          <div class="card stat-card" id="kpi-preventable-savings">
+            <div class="stat-icon" aria-hidden="true">📉</div>
+            <div class="stat-label">Annual Leakage Savings</div>
+            <div class="stat-value text-emerald" id="val-preventable-savings">$372,935</div>
+            <div class="stat-subtext text-emerald">via 216 HV Specification Cutoff</div>
+          </div>
+          <div class="card stat-card" id="kpi-active-stations">
+            <div class="stat-icon" aria-hidden="true">🏭</div>
+            <div class="stat-label">Monitored Stations</div>
+            <div class="stat-value text-cyan">4 Stations</div>
+            <div class="stat-subtext text-muted">ST-10, ST-20, ST-30, ST-40 (3 Shifts)</div>
+          </div>
+        </div>
+
+        <!-- 2 Column: Financial Recovery Table & Station Risk Chart -->
+        <div class="grid-2">
+          <!-- Financial Recovery Breakdown -->
+          <article class="card" id="card-vendor-recovery">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title"><span>⚖️</span> Vendor Financial Claim Recovery (Q11)</h2>
+                <div class="card-subtitle">Aggregated In-Plant Scrap, Contractual Chargebacks & Warranty Claims</div>
+              </div>
+            </div>
+            <div class="table-wrapper">
+              <table id="table-vendor-recovery">
+                <thead>
+                  <tr>
+                    <th>Vendor</th>
+                    <th>In-Plant Scrap</th>
+                    <th>Chargebacks</th>
+                    <th>Warranty Claims</th>
+                    <th>Total Claim</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><strong>VENDOR A</strong></td>
+                    <td>$666,710.00</td>
+                    <td>$559,505.03</td>
+                    <td>$559,505.03</td>
+                    <td class="text-rose font-mono"><strong>$1,785,720.06</strong></td>
+                  </tr>
+                  <tr>
+                    <td><strong>VENDOR B</strong></td>
+                    <td>$832,095.00</td>
+                    <td>$750,852.70</td>
+                    <td>$750,852.70</td>
+                    <td class="text-rose font-mono"><strong>$2,333,800.40</strong></td>
+                  </tr>
+                  <tr>
+                    <td><strong>VENDOR C</strong></td>
+                    <td>$503,635.00</td>
+                    <td>$411,485.34</td>
+                    <td>$411,485.34</td>
+                    <td class="text-rose font-mono"><strong>$1,326,605.68</strong></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+
+          <!-- Interactive Station Defect Risk Visualizer Chart -->
+          <article class="card" id="card-station-chart-container">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title"><span>📊</span> Station Risk & Shift Defect Distribution (Q1)</h2>
+                <div class="card-subtitle">LightGBM Poisson Defect Counts by Assembly Station</div>
+              </div>
+            </div>
+            <div class="chart-wrapper">
+              <canvas id="chart-station-risk"></canvas>
+            </div>
+          </article>
+        </div>
+
+        <!-- 11 Core Questions Architecture Matrix -->
+        <article class="card" id="card-11-questions-map">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title"><span>🗺️</span> 11 Core Questions Architecture & Model Verification</h2>
+              <div class="card-subtitle">Complete End-to-End System Mapping across Tiers 1, 2, and 3</div>
+            </div>
+          </div>
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Tier</th>
+                  <th>Core Question</th>
+                  <th>Model / Engine</th>
+                  <th>Key Output / Accuracy</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Tier 1</td>
+                  <td>1. Defect Count & High-Risk Station</td>
+                  <td>LightGBM Poisson Regressor</td>
+                  <td>MAE: 8.82 defects / shift | Station Ranking</td>
+                  <td><span class="text-emerald font-mono">VERIFIED</span></td>
+                </tr>
+                <tr>
+                  <td>Tier 1</td>
+                  <td>2. Process Drift & Parameter Attribution</td>
+                  <td>TreeSHAP Attributor & CUSUM</td>
+                  <td>Real-Time Parameter Impact Attribution</td>
+                  <td><span class="text-emerald font-mono">VERIFIED</span></td>
+                </tr>
+                <tr>
+                  <td>Tier 1</td>
+                  <td>3. Immediate Adjustment / Preventive Action</td>
+                  <td>Prescriptive Recipe Engine</td>
+                  <td>Action Codes + Delta Torque / Angle Offsets</td>
+                  <td><span class="text-emerald font-mono">VERIFIED</span></td>
+                </tr>
+                <tr>
+                  <td>Tier 1</td>
+                  <td>4. Failure Mode & Top 5 Contributors</td>
+                  <td>Multi-Class Classifier</td>
+                  <td>99.69% Accuracy | Top 5 Physical Drivers</td>
+                  <td><span class="text-emerald font-mono">VERIFIED</span></td>
+                </tr>
+                <tr>
+                  <td>Tier 2</td>
+                  <td>5. Marginal Batch Downstream Risk</td>
+                  <td>Marginal Lot Classifier</td>
+                  <td>ROC-AUC: 0.8030 | Borderline High Detection</td>
+                  <td><span class="text-emerald font-mono">VERIFIED</span></td>
+                </tr>
+                <tr>
+                  <td>Tier 2</td>
+                  <td>6. Downstream Assembly Defect & Impact</td>
+                  <td>GBDT Severity & Scrap Forecaster</td>
+                  <td>Defect Type, Severity (1-5), Expected Scrap</td>
+                  <td><span class="text-emerald font-mono">VERIFIED</span></td>
+                </tr>
+                <tr>
+                  <td>Tier 2</td>
+                  <td>7. Adaptive Machine Parameter Compensation</td>
+                  <td>Physics-Informed Offset Engine</td>
+                  <td>Torque (+0.38 Nm), Angle (+11.4°), RPM (-7.6%)</td>
+                  <td><span class="text-emerald font-mono">VERIFIED</span></td>
+                </tr>
+                <tr>
+                  <td>Tier 3</td>
+                  <td>8. 30-Day Quality Trends & Recurrence</td>
+                  <td>Time-Series Recurrence Analyzer</td>
+                  <td>Supplier Defect Rates & Recurrent CAPA Matrix</td>
+                  <td><span class="text-emerald font-mono">VERIFIED</span></td>
+                </tr>
+                <tr>
+                  <td>Tier 3</td>
+                  <td>9. Field Failures & Warranty Traceability</td>
+                  <td>Genealogy Graph Engine</td>
+                  <td>Claim → Part → Station → Batch → Supplier</td>
+                  <td><span class="text-emerald font-mono">VERIFIED</span></td>
+                </tr>
+                <tr>
+                  <td>Tier 3</td>
+                  <td>10. Receiving Inspection vs Warranty Gap</td>
+                  <td>Statistical Tolerance Leakage Engine</td>
+                  <td>216–230 HV Leakage ($438k) → Tighten USL</td>
+                  <td><span class="text-emerald font-mono">VERIFIED</span></td>
+                </tr>
+                <tr>
+                  <td>Tier 3</td>
+                  <td>11. SCAR Generation & Financial Recovery</td>
+                  <td>Automated 8D SCAR Dossier Builder</td>
+                  <td>$5.45M Recovery Claims Generated</td>
+                  <td><span class="text-emerald font-mono">VERIFIED</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+
+      <!-- ============================================================== -->
+      <!-- TAB 2: TIER 1 MANUFACTURING & DRIFT SIMULATOR -->
+      <!-- ============================================================== -->
+      <section id="tab-tier1" class="tab-content" aria-labelledby="tab-btn-tier1">
+        <!-- Preset Scenarios Quick Bar -->
+        <div class="preset-bar">
+          <span style="font-size: 13px; font-weight: 600; color: var(--text-muted);">Quick-Test Operational Presets:</span>
+          <button class="preset-btn" onclick="applyPreset('normal')">🟢 Normal Healthy (12.5 Nm, 55°C)</button>
+          <button class="preset-btn" onclick="applyPreset('fastening')">🔴 Incomplete Fastening Drift (13.4 Nm, 268°)</button>
+          <button class="preset-btn" onclick="applyPreset('surface')">🟠 Surface Thermal Flaw (68°C)</button>
+          <button class="preset-btn" onclick="applyPreset('wear')">🟣 High Tool Wear & Chatter (88% Wear, 3.4g)</button>
+          <button class="preset-btn" onclick="applyPreset('hydraulic')">🔴 Hydraulic Pressure Collapse (78 psi)</button>
+        </div>
+
+        <div class="grid-1-2">
+          <!-- Real-Time Machine Telemetry Simulator -->
+          <article class="card" id="card-sensor-simulator">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title"><span>🎛️</span> Real-Time Telemetry Simulator (Q2 & Q4)</h2>
+                <div class="card-subtitle">Adjust machine parameters to simulate live drifts and observe model response</div>
+              </div>
+            </div>
+
+            <!-- Station Selector -->
+            <div class="control-group">
+              <div class="control-label-wrapper">
+                <label for="sel-station" class="control-label">Target Station</label>
+              </div>
+              <select id="sel-station" class="btn-secondary" style="width: 100%; padding: 10px; background: #1e293b; color: white;" onchange="selectStation(this.value)">
+                <option value="ST-10">Station ST-10 (Pre-Fastening)</option>
+                <option value="ST-20" selected>Station ST-20 (Main Fastening)</option>
+                <option value="ST-30">Station ST-30 (Torque Inspection)</option>
+                <option value="ST-40">Station ST-40 (Final Verification)</option>
+              </select>
+            </div>
+
+            <!-- Spindle Temperature -->
+            <div class="control-group">
+              <div class="control-label-wrapper">
+                <label for="slider-spindle-temp" class="control-label">Spindle Temperature (°C)</label>
+                <span class="control-value" id="val-spindle-temp">64.5 °C</span>
+              </div>
+              <input type="range" id="slider-spindle-temp" min="40" max="95" step="0.5" value="64.5" oninput="updateSimulator()">
+            </div>
+
+            <!-- Peak Fastening Torque -->
+            <div class="control-group">
+              <div class="control-label-wrapper">
+                <label for="slider-peak-torque" class="control-label">Peak Fastening Torque (Nm)</label>
+                <span class="control-value" id="val-peak-torque">13.4 Nm</span>
+              </div>
+              <input type="range" id="slider-peak-torque" min="9.0" max="16.0" step="0.1" value="13.4" oninput="updateSimulator()">
+            </div>
+
+            <!-- Shutoff Angle -->
+            <div class="control-group">
+              <div class="control-label-wrapper">
+                <label for="slider-shutoff-angle" class="control-label">Shutoff Angle (deg)</label>
+                <span class="control-value" id="val-shutoff-angle">268.0 °</span>
+              </div>
+              <input type="range" id="slider-shutoff-angle" min="200" max="450" step="1.0" value="268.0" oninput="updateSimulator()">
+            </div>
+
+            <!-- Vibration RMS -->
+            <div class="control-group">
+              <div class="control-label-wrapper">
+                <label for="slider-vibration" class="control-label">Vibration RMS (g)</label>
+                <span class="control-value" id="val-vibration">2.10 g</span>
+              </div>
+              <input type="range" id="slider-vibration" min="0.5" max="5.0" step="0.05" value="2.10" oninput="updateSimulator()">
+            </div>
+
+            <!-- Tool Wear Index -->
+            <div class="control-group">
+              <div class="control-label-wrapper">
+                <label for="slider-tool-wear" class="control-label">Tool Wear Index (%)</label>
+                <span class="control-value" id="val-tool-wear">52.0 %</span>
+              </div>
+              <input type="range" id="slider-tool-wear" min="0" max="100" step="1.0" value="52.0" oninput="updateSimulator()">
+            </div>
+
+            <!-- System Pressure -->
+            <div class="control-group">
+              <div class="control-label-wrapper">
+                <label for="slider-pressure" class="control-label">System Pressure (psi)</label>
+                <span class="control-value" id="val-pressure">115.0 psi</span>
+              </div>
+              <input type="range" id="slider-pressure" min="70" max="140" step="1.0" value="115.0" oninput="updateSimulator()">
+            </div>
+
+            <button class="btn-primary" id="btn-run-simulation" onclick="triggerSimulation()">
+              <span>⚡</span> Run Real-Time Inference
+            </button>
+          </article>
+
+          <!-- Real-Time Inference, SHAP Waterfall & Prescriptive Action Output -->
+          <div style="display: flex; flex-direction: column; gap: 24px;">
+            <!-- Model Prediction Header Card -->
+            <article class="card" id="card-inference-results">
+              <div class="card-header">
+                <div>
+                  <h2 class="card-title"><span>🎯</span> Real-Time Model Diagnostics (Q4)</h2>
+                  <div class="card-subtitle">LightGBM Multi-Class Classifier with TreeSHAP Explainer</div>
+                </div>
+                <div class="badge" id="badge-defect-severity" style="background: rgba(239, 68, 68, 0.15); color: #f87171; border-color: rgba(239, 68, 68, 0.4);">
+                  DEFECT DETECTED
+                </div>
+              </div>
+
+              <div style="display: flex; align-items: baseline; gap: 16px; margin-bottom: 12px;">
+                <div style="font-size: 14px; color: var(--text-muted);">Predicted Mode:</div>
+                <div style="font-family: var(--font-heading); font-size: 26px; font-weight: 800; color: #ffffff;" id="res-failure-mode">
+                  INCOMPLETE_FASTENING
+                </div>
+                <div style="font-size: 13px; color: var(--accent-emerald);" id="res-confidence">
+                  (Confidence: 99.8%)
+                </div>
+              </div>
+
+              <!-- Top Physical Contributors SHAP Waterfall (Q2) -->
+              <h3 style="font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-top: 14px;">
+                Top Physical Contributors (TreeSHAP Feature Attribution)
+              </h3>
+              <div class="shap-container" id="shap-contributor-list">
+                <!-- Dynamically populated -->
+              </div>
+            </article>
+
+            <!-- Prescriptive Preventive Action Recommendation (Q3) -->
+            <article class="card" id="card-prescriptive-action">
+              <div class="card-header">
+                <div>
+                  <h2 class="card-title"><span>🛠️</span> Prescriptive Action Engine (Q3)</h2>
+                  <div class="card-subtitle">Automated Decision Support & Machine Recipe Offsets</div>
+                </div>
+              </div>
+
+              <div class="prescriptive-box" id="prescriptive-box-content">
+                <div class="prescriptive-badge" id="prescriptive-urgency">HIGH URGENCY - BEFORE NEXT BATCH</div>
+                <div class="prescriptive-action-title text-cyan" id="prescriptive-code">RECALIBRATE_TOOL</div>
+                <p style="font-size: 13px; color: #cbd5e1;" id="prescriptive-task">
+                  Recalibrate torque shutoff sensor and inspect fastener thread engagement depth. Shutoff angle is 92° below nominal target.
+                </p>
+
+                <div class="prescriptive-offsets" id="prescriptive-offsets-list">
+                  <div class="offset-pill">
+                    <span class="text-muted">Torque Offset:</span>
+                    <strong class="text-cyan font-mono" id="offset-torque">-0.90 Nm</strong>
+                  </div>
+                  <div class="offset-pill">
+                    <span class="text-muted">Angle Offset:</span>
+                    <strong class="text-cyan font-mono" id="offset-angle">+92.0°</strong>
+                  </div>
+                  <div class="offset-pill">
+                    <span class="text-muted">Speed Throttle:</span>
+                    <strong class="text-rose font-mono" id="offset-speed">-10.0%</strong>
+                  </div>
+                </div>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================== -->
+      <!-- TAB 3: TIER 2 MATERIAL INTELLIGENCE & COMPENSATION -->
+      <!-- ============================================================== -->
+      <section id="tab-tier2" class="tab-content" aria-labelledby="tab-btn-tier2">
+        <div class="grid-2">
+          <!-- Marginal Batch Receiving QC Evaluator (Q5) -->
+          <article class="card" id="card-material-evaluator">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title"><span>🔬</span> Incoming Batch QC & Marginal Risk (Q5)</h2>
+                <div class="card-subtitle">Identifies batches that pass receiving inspection but pose downstream risks</div>
+              </div>
+            </div>
+
+            <!-- Material Hardness Slider -->
+            <div class="control-group">
+              <div class="control-label-wrapper">
+                <label for="slider-mat-hardness" class="control-label">Material Hardness (HV)</label>
+                <span class="control-value" id="val-mat-hardness">224.5 HV</span>
+              </div>
+              <input type="range" id="slider-mat-hardness" min="175" max="235" step="0.5" value="224.5" oninput="updateMaterialEvaluator()">
+              <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-subtle); margin-top: 4px;">
+                <span>LSL: 180 HV</span>
+                <span class="text-amber">Nominal: 205 HV</span>
+                <span class="text-rose">Leakage Band: 216–230 HV</span>
+                <span>USL: 230 HV</span>
+              </div>
+            </div>
+
+            <!-- Tensile Strength Slider -->
+            <div class="control-group">
+              <div class="control-label-wrapper">
+                <label for="slider-mat-tensile" class="control-label">Tensile Strength (MPa)</label>
+                <span class="control-value" id="val-mat-tensile">670.0 MPa</span>
+              </div>
+              <input type="range" id="slider-mat-tensile" min="500" max="750" step="5.0" value="670.0" oninput="updateMaterialEvaluator()">
+            </div>
+
+            <!-- Supplier Selector -->
+            <div class="control-group">
+              <div class="control-label-wrapper">
+                <label for="sel-mat-supplier" class="control-label">Source Supplier</label>
+              </div>
+              <select id="sel-mat-supplier" class="btn-secondary" style="width: 100%; padding: 10px; background: #1e293b; color: white;" onchange="updateMaterialEvaluator()">
+                <option value="VENDOR_A">VENDOR A (Fastener Bar Stock)</option>
+                <option value="VENDOR_B" selected>VENDOR B (Structural Cold Drawn)</option>
+                <option value="VENDOR_C">VENDOR C (High Strength Alloy)</option>
+              </select>
+            </div>
+
+            <!-- Risk Status Banner -->
+            <div class="banner-alert" id="box-batch-risk" style="margin-top: 18px; margin-bottom: 0;">
+              <div class="banner-alert-content">
+                <span class="banner-icon" aria-hidden="true">⚠️</span>
+                <div>
+                  <div class="banner-title" id="val-batch-risk-status">HIGH RISK MARGINAL BATCH</div>
+                  <div class="banner-desc" id="val-batch-risk-desc">
+                    Passed Receiving QC (224.5 &lt; 230 HV), but Downstream Risk Probability is <strong>78.4%</strong>.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <!-- Downstream Assembly Defect & Impact Forecast (Q6) -->
+          <article class="card" id="card-downstream-forecast">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title"><span>📈</span> Downstream Assembly Defect Forecast (Q6)</h2>
+                <div class="card-subtitle">Predicts downstream failure mode, scrap volume, and severity impact</div>
+              </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 18px;">
+              <div style="background: rgba(15, 23, 42, 0.5); padding: 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+                <div style="font-size: 12px; color: var(--text-muted);">Expected Scrap Units</div>
+                <div style="font-size: 26px; font-weight: 800; color: #f87171;" id="forecast-scrap-units">253 units</div>
+                <div style="font-size: 12px; color: var(--text-muted);" id="forecast-scrap-cost">Est. Cost: $13,890</div>
+              </div>
+              <div style="background: rgba(15, 23, 42, 0.5); padding: 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+                <div style="font-size: 12px; color: var(--text-muted);">Expected Defect Severity</div>
+                <div style="font-size: 26px; font-weight: 800; color: #fbbf24;" id="forecast-severity">2.3 / 5.0</div>
+                <div style="font-size: 12px; color: var(--text-muted);">Major Function Impairment</div>
+              </div>
+            </div>
+
+            <div style="background: rgba(15, 23, 42, 0.4); padding: 16px; border-radius: var(--radius-sm); border-left: 3px solid var(--accent-rose);">
+              <div style="font-size: 13px; font-weight: 700; color: #ffffff;" id="forecast-mode-title">
+                Likely Failure Mode: INCOMPLETE_FASTENING
+              </div>
+              <p style="font-size: 12px; color: #cbd5e1; margin-top: 6px;" id="forecast-root-cause">
+                Excessive material hardness (224.5 HV) creates elevated torque friction during thread rundown, triggering premature tool shutoff before target clamp angle is attained.
+              </p>
+            </div>
+          </article>
+        </div>
+
+        <!-- Adaptive Machine Parameter Compensation Engine (Q7) -->
+        <article class="card" id="card-adaptive-compensation">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title"><span>⚡</span> Adaptive Machine Parameter Compensation (Q7)</h2>
+              <div class="card-subtitle">Real-time recipe offsets to safely process borderline material stock without scrap</div>
+            </div>
+            <span class="badge badge-live" id="comp-status-badge">ACTIVE COMPENSATION</span>
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px;">
+            <div style="background: rgba(15, 23, 42, 0.6); padding: 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+              <div style="font-size: 12px; color: var(--text-muted);">Prescribed Torque Target</div>
+              <div style="font-size: 24px; font-weight: 700; color: var(--accent-cyan);" id="comp-target-torque">12.88 Nm</div>
+              <div style="font-size: 12px; color: var(--accent-emerald);" id="comp-offset-torque">+0.38 Nm Offset</div>
+            </div>
+            <div style="background: rgba(15, 23, 42, 0.6); padding: 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+              <div style="font-size: 12px; color: var(--text-muted);">Prescribed Shutoff Angle</div>
+              <div style="font-size: 24px; font-weight: 700; color: var(--accent-cyan);" id="comp-target-angle">371.4°</div>
+              <div style="font-size: 12px; color: var(--accent-emerald);" id="comp-offset-angle">+11.4° Offset</div>
+            </div>
+            <div style="background: rgba(15, 23, 42, 0.6); padding: 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+              <div style="font-size: 12px; color: var(--text-muted);">Spindle Speed Throttle</div>
+              <div style="font-size: 24px; font-weight: 700; color: #fbbf24;" id="comp-speed-throttle">-7.6%</div>
+              <div style="font-size: 12px; color: var(--text-muted);">Prevents thermal surge</div>
+            </div>
+            <div style="background: rgba(15, 23, 42, 0.6); padding: 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+              <div style="font-size: 12px; color: var(--text-muted);">Coolant Mist Mode</div>
+              <div style="font-size: 18px; font-weight: 700; color: #a5b4fc;" id="comp-coolant-mode">HIGH PRESSURE</div>
+              <div style="font-size: 12px; color: var(--text-muted);">Mist lubrication boost</div>
+            </div>
+          </div>
+
+          <div style="padding: 14px 18px; background: rgba(99, 102, 241, 0.1); border-radius: var(--radius-sm); border-left: 3px solid var(--accent-indigo); font-size: 13px;" id="comp-guidance">
+            Batch hardness is +19.5 HV above nominal. Applying torque offset of +0.38 Nm and speed reduction of -7.6% to eliminate incomplete fastening risk.
+          </div>
+        </article>
+      </section>
+
+      <!-- ============================================================== -->
+      <!-- TAB 4: TIER 3 SUPPLIER QUALITY & SCAR RECOVERY -->
+      <!-- ============================================================== -->
+      <section id="tab-tier3" class="tab-content" aria-labelledby="tab-btn-tier3">
+        <!-- 3 Supplier Cards (Q8) -->
+        <div class="grid-3">
+          <article class="card" id="card-vendor-a">
+            <div class="card-header">
+              <div>
+                <h3 class="card-title">VENDOR A</h3>
+                <div class="card-subtitle">Fastener Bar Stock • 367 Claims</div>
+              </div>
+              <span class="badge" style="background: rgba(239, 68, 68, 0.15); color: #f87171;">HIGH RISK</span>
+            </div>
+            <div style="margin-bottom: 12px;">
+              <div style="font-size: 12px; color: var(--text-muted);">Current Defect Rate: <strong class="text-rose font-mono">5.68%</strong></div>
+              <div style="font-size: 12px; color: var(--text-muted);">Top Defect Mode: <strong>SURFACE_FLAW</strong></div>
+              <div style="font-size: 12px; color: var(--text-muted);">CAPA Recurrence Count: <strong class="text-amber">28 events</strong></div>
+            </div>
+            <div style="font-family: var(--font-heading); font-size: 22px; font-weight: 800; color: #ffffff; margin-bottom: 12px;">
+              $1,785,720 Demand
+            </div>
+            <button class="btn-primary" onclick="openSCAR('VENDOR_A')">Generate SCAR 8D</button>
+          </article>
+
+          <article class="card" id="card-vendor-b">
+            <div class="card-header">
+              <div>
+                <h3 class="card-title">VENDOR B</h3>
+                <div class="card-subtitle">Cold Drawn Structural • 476 Claims</div>
+              </div>
+              <span class="badge" style="background: rgba(239, 68, 68, 0.15); color: #f87171;">CRITICAL</span>
+            </div>
+            <div style="margin-bottom: 12px;">
+              <div style="font-size: 12px; color: var(--text-muted);">Current Defect Rate: <strong class="text-rose font-mono">12.85%</strong></div>
+              <div style="font-size: 12px; color: var(--text-muted);">Top Defect Mode: <strong>INCOMPLETE_FASTENING</strong></div>
+              <div style="font-size: 12px; color: var(--text-muted);">CAPA Recurrence Count: <strong class="text-amber">28 events</strong></div>
+            </div>
+            <div style="font-family: var(--font-heading); font-size: 22px; font-weight: 800; color: #ffffff; margin-bottom: 12px;">
+              $2,333,800 Demand
+            </div>
+            <button class="btn-primary" onclick="openSCAR('VENDOR_B')">Generate SCAR 8D</button>
+          </article>
+
+          <article class="card" id="card-vendor-c">
+            <div class="card-header">
+              <div>
+                <h3 class="card-title">VENDOR C</h3>
+                <div class="card-subtitle">High Strength Alloy • 272 Claims</div>
+              </div>
+              <span class="badge" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24;">ELEVATED</span>
+            </div>
+            <div style="margin-bottom: 12px;">
+              <div style="font-size: 12px; color: var(--text-muted);">Current Defect Rate: <strong class="text-emerald font-mono">2.59%</strong></div>
+              <div style="font-size: 12px; color: var(--text-muted);">Top Defect Mode: <strong>THREAD_WEAR</strong></div>
+              <div style="font-size: 12px; color: var(--text-muted);">CAPA Recurrence Count: <strong class="text-amber">30 events</strong></div>
+            </div>
+            <div style="font-family: var(--font-heading); font-size: 22px; font-weight: 800; color: #ffffff; margin-bottom: 12px;">
+              $1,326,605 Demand
+            </div>
+            <button class="btn-primary" onclick="openSCAR('VENDOR_C')">Generate SCAR 8D</button>
+          </article>
+        </div>
+
+        <!-- 2 Column: Supplier Trend Chart & Tolerance Leakage Gap Chart -->
+        <div class="grid-2">
+          <!-- 30-Day Supplier Quality Defect Trend Chart (Q8) -->
+          <article class="card" id="card-supplier-trends-chart">
+            <div class="card-header">
+              <div>
+                <h3 class="card-title"><span>📈</span> 30-Day Supplier Defect Trends & Trajectory (Q8)</h3>
+                <div class="card-subtitle">Historical defect percentage by vendor over 10-month evaluation period</div>
+              </div>
+            </div>
+            <div class="chart-wrapper">
+              <canvas id="chart-supplier-trends"></canvas>
+            </div>
+          </article>
+
+          <!-- Tolerance Leakage Gap Analysis Chart (Q10) -->
+          <article class="card" id="card-gap-analysis">
+            <div class="card-header">
+              <div>
+                <h3 class="card-title"><span>📉</span> Tolerance Leakage Gap Distribution (Q10)</h3>
+                <div class="card-subtitle">Material Hardness Curve vs. Leaked Field Warranty Losses ($438.7k)</div>
+              </div>
+            </div>
+            <div class="chart-wrapper">
+              <canvas id="chart-tolerance-leakage"></canvas>
+            </div>
+          </article>
+        </div>
+
+        <!-- Warranty Claim Genealogy Traceability Search (Q9) -->
+        <article class="card" id="card-genealogy-trace" style="margin-bottom: 24px;">
+          <div class="card-header">
+            <div>
+              <h3 class="card-title"><span>🔍</span> Warranty Claim Genealogy Traceability Graph (Q9)</h3>
+              <div class="card-subtitle">Instant multi-tier linking: Claim → Part Serial → Cycle → Station → Batch → Supplier</div>
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 10px; margin-bottom: 16px;">
+            <input type="text" id="inp-trace-id" class="btn-secondary" style="flex: 1; padding: 10px 14px; background: #1e293b; color: white;" value="CLM-2026-00001" placeholder="Enter Claim ID (e.g. CLM-2026-00001)">
+            <button class="btn-primary" style="width: auto;" onclick="runClaimTrace()">Trace Genealogy</button>
+          </div>
+
+          <!-- Visual Genealogy Breadcrumb Chain -->
+          <div class="genealogy-chain" id="genealogy-chain-visual">
+            <div class="genealogy-node">
+              <div class="genealogy-node-type">Warranty Claim</div>
+              <div class="genealogy-node-val" id="chain-claim-id">CLM-2026-00001</div>
+              <div style="font-size: 11px; color: var(--accent-rose); font-weight: 700;" id="chain-claim-cost">$150.00</div>
+            </div>
+            <span class="genealogy-arrow">➔</span>
+            <div class="genealogy-node">
+              <div class="genealogy-node-type">Part Serial</div>
+              <div class="genealogy-node-val" id="chain-part-serial">SN-9988-207569</div>
+            </div>
+            <span class="genealogy-arrow">➔</span>
+            <div class="genealogy-node">
+              <div class="genealogy-node-type">Fastener Cycle</div>
+              <div class="genealogy-node-val" id="chain-cycle-id">TORQ-2026-207569</div>
+              <div style="font-size: 11px; color: var(--accent-cyan);" id="chain-torque-val">14.01 Nm | 280.4°</div>
+            </div>
+            <span class="genealogy-arrow">➔</span>
+            <div class="genealogy-node">
+              <div class="genealogy-node-type">Assembly Station</div>
+              <div class="genealogy-node-val" id="chain-station-id">ST-10</div>
+            </div>
+            <span class="genealogy-arrow">➔</span>
+            <div class="genealogy-node">
+              <div class="genealogy-node-type">Material Lot</div>
+              <div class="genealogy-node-val" id="chain-batch-id">LOT-2026-RAW-177</div>
+              <div style="font-size: 11px; color: var(--accent-amber);" id="chain-hardness-val">227.33 HV (Leakage!)</div>
+            </div>
+            <span class="genealogy-arrow">➔</span>
+            <div class="genealogy-node">
+              <div class="genealogy-node-type">Vendor Origin</div>
+              <div class="genealogy-node-val" style="color: var(--accent-indigo);" id="chain-supplier-id">VENDOR_B</div>
+            </div>
+          </div>
+        </article>
+
+        <!-- Automated 8D SCAR Dossier Modal View (Q11) -->
+        <article class="card" id="card-scar-dossier">
+          <div class="card-header">
+            <div>
+              <h3 class="card-title"><span>📋</span> Automated Supplier Corrective Action Request (SCAR / 8D Format)</h3>
+              <div class="card-subtitle" id="scar-doc-header">SCAR-2026-VENDOR_B • Total Financial Demand: $2,333,800.40</div>
+            </div>
+            <div style="display: flex; gap: 10px;">
+              <button class="btn-secondary" onclick="window.print()">Print / PDF</button>
+              <button class="btn-primary" style="width: auto;" onclick="copySCAR()">Copy 8D Dossier</button>
+            </div>
+          </div>
+
+          <div class="scar-dossier" id="scar-dossier-body">
+            <!-- Dynamically populated 8D steps -->
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer style="margin-top: 48px; text-align: center; color: var(--text-subtle); font-size: 12px; border-top: 1px solid var(--border-subtle); padding-top: 24px;">
+      PrecisionPulse AI™ Manufacturing Intelligence Suite • Industrial LightGBM & TreeSHAP Engines • Full 11-Question Compliance
+    </footer>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

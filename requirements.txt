@@ -1,0 +1,32 @@
+# =============================================================================
+# Manufacturing, Material & Supplier Intelligence Suite (FactorySmart AI™)
+# Core Dependencies for ML, API Services, Dashboard & Analytical Engines
+# =============================================================================
+
+# Fast API Backend & Web Server
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.8.0
+python-multipart>=0.0.9
+
+# Data Processing & Numerical Computation
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Machine Learning & Explainable AI
+scikit-learn>=1.3.0
+lightgbm>=4.0.0
+xgboost>=2.0.0
+shap>=0.45.0
+
+# Interactive Dashboard & Visualizations
+streamlit>=1.35.0
+plotly>=5.18.0
+
+# Networking & HTTP Clients
+requests>=2.31.0
+httpx>=0.27.0
+urllib3>=2.0.0
+
+# Environment & Utilities
+python-dotenv>=1.0.0

@@ -1,0 +1,54 @@
+{
+  "scar_id": "SCAR-2026-VENDOR_C-1014",
+  "issue_date": "2026-10-14",
+  "supplier_id": "VENDOR_C",
+  "status": "ISSUED - 8D REQUIRED WITHIN 14 BUSINESS DAYS",
+  "executive_summary": "Formal Supplier Corrective Action Request issued to VENDOR_C due to recurring quality non-conformances in failure mode 'THREAD_WEAR', excessive in-plant scrap, and downstream field warranty exposure. Total financial recovery claim: $1,326,605.68.",
+  "financial_recovery_breakdown": {
+    "in_plant_scrap_recovery_usd": 503635.0,
+    "contractual_chargebacks_usd": 411485.34,
+    "field_warranty_recovery_usd": 411485.34,
+    "total_demand_amount_usd": 1326605.68
+  },
+  "evidence_and_defect_metrics": {
+    "total_nonconforming_batches": 0,
+    "sample_nonconforming_lots": [],
+    "total_field_warranty_claims": 272,
+    "capa_recurrence_history": 30,
+    "root_defect_pattern": "THREAD_WEAR"
+  },
+  "mandatory_8d_actions": [
+    {
+      "step": "D1 - Team Formation",
+      "requirement": "Establish cross-functional metallurgical & quality team led by Supplier Quality Manager."
+    },
+    {
+      "step": "D2 - Problem Description",
+      "requirement": "Investigate batch hardness dispersion exceeding 216 HV causing severe downstream fastening failures."
+    },
+    {
+      "step": "D3 - Containment Action",
+      "requirement": "Quarantine all in-transit and warehouse inventory for batches []."
+    },
+    {
+      "step": "D4 - Root Cause Analysis (5-Why)",
+      "requirement": "Determine furnace heat-treat quench temperature variability resulting in high hardness excursions."
+    },
+    {
+      "step": "D5 - Corrective Action Selection",
+      "requirement": "Implement automated pyrometer control and 100% Eddy-current hardness testing prior to shipment."
+    },
+    {
+      "step": "D6 - Verification & Validation",
+      "requirement": "Achieve Cpk >= 1.67 over 5 consecutive pilot production heats."
+    },
+    {
+      "step": "D7 - Prevent Recurrence",
+      "requirement": "Revise raw material control plan and update FMEA RPN scores."
+    },
+    {
+      "step": "D8 - Financial Settlement",
+      "requirement": "Authorize invoice credit memo for $1,326,605.68 within 30 days."
+    }
+  ]
+}
