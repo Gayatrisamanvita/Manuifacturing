@@ -1,3 +1,14 @@
+---
+title: Manufacturing Intelligence API
+emoji: 🏭
+colorFrom: blue
+colorTo: indigo
+sdk: gradio
+app_file: app.py
+pinned: false
+license: mit
+---
+
 # Manufacturing, Material & Supplier Intelligence Suite (FactorySmart AI™)
 
 An end-to-end, enterprise-grade AI/ML intelligence platform designed for manufacturing quality control, raw material receiving inspection, adaptive machine compensation, warranty forensic traceability, and vendor financial recovery.
