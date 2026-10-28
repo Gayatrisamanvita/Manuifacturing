@@ -17,6 +17,15 @@ import gradio as gr
 from src.api import app as fastapi_app
 import httpx
 
+# ZeroGPU compatibility probe (satisfies Hugging Face ZeroGPU watchdog if GPU hardware was selected)
+try:
+    import spaces
+    @spaces.GPU
+    def _zero_gpu_probe():
+        return True
+except Exception:
+    pass
+
 # ---------------------------------------------------------------------------
 # Gradio Interactive Interface
 # ---------------------------------------------------------------------------
@@ -92,4 +101,4 @@ app = gr.mount_gradio_app(fastapi_app, demo, path="/")
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 7860))
-    uvicorn.run("app:app", host="0.0.0.0", port=port, reload=False)
+    uvicorn.run(app, host="0.0.0.0", port=port, reload=False)
