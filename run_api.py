@@ -56,7 +56,8 @@ def main():
     parser.add_argument("--reload", action="store_true", default=False, help="Enable auto-reload on code changes")
     args = parser.parse_args()
 
-    default_port = 8001 if args.mode == "supplier" else 8000
+    env_port = int(os.environ.get("PORT")) if os.environ.get("PORT") else None
+    default_port = 8001 if args.mode == "supplier" else (env_port or 8000)
     port = args.port if args.port is not None else default_port
 
     print_server_info(args.host, port, args.mode)
