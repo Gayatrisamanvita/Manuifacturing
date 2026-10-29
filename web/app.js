@@ -10,6 +10,9 @@ let activeStationId = "ST-20";
 let chartStationRisk = null;
 let chartSupplierTrends = null;
 let chartToleranceLeakage = null;
+let supplierCatalog = null;
+let selectedMaterialRecords = [];
+let finishedProductSearchTimer = null;
 
 // Initialize on Load
 document.addEventListener("DOMContentLoaded", () => {
@@ -17,12 +20,344 @@ document.addEventListener("DOMContentLoaded", () => {
   initCharts();
   openSCAR("VENDOR_B");
   triggerSimulation();
+  loadSupplierAnalysis();
+  loadMaterialAnalysis();
+  loadProductionAnalysis();
+  document.getElementById("finished-product-search")?.addEventListener("keydown", event => {
+    if (event.key === "Enter") searchFinishedProducts();
+  });
+  document.getElementById("supplier-products-table")?.addEventListener("click", event => {
+    const row = event.target.closest("[data-sku]");
+    if (row) selectSupplierProduct(row.dataset.sku);
+  });
+  document.getElementById("supplier-products-table")?.addEventListener("keydown", event => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const row = event.target.closest("[data-sku]");
+    if (row) {
+      event.preventDefault();
+      selectSupplierProduct(row.dataset.sku);
+    }
+  });
+  document.getElementById("supplier-risk-products")?.addEventListener("click", event => {
+    const item = event.target.closest("[data-sku]");
+    if (item) selectSupplierProduct(item.dataset.sku);
+  });
+  document.getElementById("all-materials-table")?.addEventListener("click", event => {
+    const row = event.target.closest("[data-lot]");
+    if (row) selectMaterialLot(row.dataset.lot);
+  });
+  document.getElementById("all-materials-table")?.addEventListener("keydown", event => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const row = event.target.closest("[data-lot]");
+    if (row) {
+      event.preventDefault();
+      selectMaterialLot(row.dataset.lot);
+    }
+  });
+  document.getElementById("high-risk-materials")?.addEventListener("click", event => {
+    const item = event.target.closest("[data-lot]");
+    if (item) selectMaterialLot(item.dataset.lot);
+  });
 });
+
+function escapeHTML(value) {
+  return String(value ?? "").replace(/[&<>"']/g, character => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  })[character]);
+}
+
+function showLoadError(elementId, error) {
+  const element = document.getElementById(elementId);
+  if (element) element.innerHTML = `<p class="error-state">${escapeHTML(error.message || "Unable to load analysis.")}</p>`;
+}
+
+async function fetchJSON(url) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    let detail = `${response.status} ${response.statusText}`;
+    try {
+      const body = await response.json();
+      detail = body.detail || detail;
+    } catch (error) {
+      console.error(`Could not read error response for ${url}`, error);
+    }
+    throw new Error(detail);
+  }
+  return response.json();
+}
+
+function riskBadge(level) {
+  const normalized = String(level || "LOW").toUpperCase();
+  return `<span class="risk-badge risk-${escapeHTML(normalized.toLowerCase())}">${escapeHTML(normalized)} RISK</span>`;
+}
+
+function renderSupplierSummaryTable(suppliers) {
+  const body = document.getElementById("overall-supplier-table");
+  body.innerHTML = suppliers.map(supplier => `
+    <tr>
+      <td><strong>${escapeHTML(supplier.supplier_id)}</strong></td>
+      <td>${Number(supplier.current_defect_rate_pct).toFixed(2)}%</td>
+      <td>${escapeHTML(supplier.top_recurring_failure_mode)}</td>
+      <td>${supplier.capa_recurrence_count}</td>
+      <td>${supplier.high_risk_products} / ${supplier.product_count}</td>
+      <td>${supplier.average_delay_days.toFixed(1)} days</td>
+      <td>${supplier.warranty_claim_count.toLocaleString()}</td>
+      <td>$${supplier.total_financial_impact_usd.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+      <td>${escapeHTML(supplier.worst_product_name)} <span class="text-rose">(+${supplier.worst_product_delay_days}d)</span></td>
+    </tr>
+  `).join("");
+}
+
+async function loadSupplierAnalysis() {
+  try {
+    supplierCatalog = await fetchJSON("/api/tier3/catalog");
+    const supplierSelect = document.getElementById("supplier-select");
+    supplierSelect.innerHTML = supplierCatalog.suppliers.map(supplier =>
+      `<option value="${escapeHTML(supplier.supplier_id)}">${escapeHTML(supplier.supplier_id.replace(/_/g, " "))} · ${supplier.product_count} products</option>`
+    ).join("");
+    renderSupplierSummaryTable(supplierCatalog.suppliers);
+    if (supplierCatalog.suppliers.length) selectSupplier(supplierSelect.value);
+  } catch (error) {
+    console.error("Supplier catalog load failed", error);
+    showLoadError("supplier-risk-products", error);
+    showLoadError("overall-supplier-table", error);
+  }
+}
+
+function selectSupplier(supplierId) {
+  if (!supplierCatalog) return;
+  const supplier = supplierCatalog.suppliers.find(item => item.supplier_id === supplierId);
+  const products = supplierCatalog.products_by_supplier[supplierId] || [];
+  const highRiskProducts = products.filter(product => product.risk_level !== "LOW").slice(0, 5);
+  const riskList = document.getElementById("supplier-risk-products");
+
+  if (!supplier) {
+    riskList.innerHTML = '<p class="empty-state">No product data is available for this supplier.</p>';
+    return;
+  }
+
+  riskList.innerHTML = `
+    <div class="summary-metric-grid">
+      <div class="summary-metric"><span>Products supplied</span><strong>${supplier.product_count}</strong></div>
+      <div class="summary-metric"><span>At-risk products</span><strong class="text-rose">${supplier.high_risk_products}</strong></div>
+      <div class="summary-metric"><span>Average delivery delay</span><strong>${supplier.average_delay_days.toFixed(1)} days</strong></div>
+      <div class="summary-metric"><span>Average product quality</span><strong>${supplier.average_quality_score_pct.toFixed(1)}%</strong></div>
+      <div class="summary-metric"><span>Current defect rate</span><strong>${Number(supplier.current_defect_rate_pct).toFixed(2)}%</strong></div>
+      <div class="summary-metric"><span>Warranty claims</span><strong>${supplier.warranty_claim_count.toLocaleString()}</strong></div>
+      <div class="summary-metric"><span>Financial impact</span><strong>$${supplier.total_financial_impact_usd.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong></div>
+      <div class="summary-metric"><span>Top recurring defect</span><strong>${escapeHTML(supplier.top_recurring_failure_mode)}</strong></div>
+    </div>
+    <h3 class="analysis-subheading">Most delayed and highest-risk products</h3>
+    ${highRiskProducts.length ? `<div class="risk-product-list">${highRiskProducts.map(product => `
+      <button type="button" class="risk-product-item" data-sku="${escapeHTML(product.sku)}">
+        <span>${riskBadge(product.risk_level)}<strong>${escapeHTML(product.product_name)}</strong><small>${escapeHTML(product.sku)} · ${escapeHTML(product.status)}</small></span>
+        <span class="delay-value">+${product.delay_days}d</span>
+      </button>
+    `).join("")}</div>` : '<p class="empty-state">No delayed products are currently listed for this supplier.</p>'}
+    <button class="btn-primary supplier-scar-button" type="button" onclick="openSCAR('${escapeHTML(supplierId)}')">Generate ${escapeHTML(supplierId)} SCAR 8D</button>
+  `;
+
+  const productSelect = document.getElementById("supplier-product-select");
+  productSelect.innerHTML = products.map(product =>
+    `<option value="${escapeHTML(product.sku)}">${escapeHTML(product.sku)} · ${escapeHTML(product.product_name)}</option>`
+  ).join("");
+
+  document.getElementById("supplier-products-table").innerHTML = products.map(product => `
+    <tr data-sku="${escapeHTML(product.sku)}" tabindex="0" role="button" aria-label="Analyze ${escapeHTML(product.product_name)}">
+      <td>${riskBadge(product.risk_level)}</td>
+      <td><strong>${escapeHTML(product.product_name)}</strong><br><span class="text-muted">${escapeHTML(product.sku)}</span></td>
+      <td>${escapeHTML(product.category)}</td>
+      <td>${product.target_lead_days} days</td>
+      <td>${product.actual_lead_days} days</td>
+      <td class="${product.delay_days >= 7 ? "text-rose" : ""}">+${product.delay_days} days</td>
+      <td>${product.quality_score_pct.toFixed(1)}%</td>
+    </tr>
+  `).join("");
+
+  if (products.length) selectSupplierProduct(products[0].sku);
+}
+
+function selectSupplierProduct(sku) {
+  if (!supplierCatalog || !sku) return;
+  const supplierId = document.getElementById("supplier-select").value;
+  const product = (supplierCatalog.products_by_supplier[supplierId] || []).find(item => item.sku === sku);
+  if (!product) return;
+  document.getElementById("supplier-product-select").value = sku;
+  const riskExplanation = product.risk_level === "HIGH"
+    ? "High delivery risk: the observed delay is at least 7 days and may affect production readiness."
+    : product.risk_level === "MODERATE"
+      ? "Moderate delivery risk: build the observed delay into purchasing and production planning."
+      : "Low delivery risk: this product is currently on schedule or has only a short delay.";
+
+  document.getElementById("supplier-product-analysis").innerHTML = `
+    <div class="product-analysis-heading">
+      <div>${riskBadge(product.risk_level)}<h3>${escapeHTML(product.product_name)}</h3><p>${escapeHTML(product.sku)} · ${escapeHTML(product.category)}</p></div>
+      <div class="product-delay-callout"><span>Delivery delay</span><strong>+${product.delay_days} days</strong><small>${escapeHTML(product.status)}</small></div>
+    </div>
+    <div class="summary-metric-grid">
+      <div class="summary-metric"><span>Target lead time</span><strong>${product.target_lead_days} days</strong></div>
+      <div class="summary-metric"><span>Actual lead time</span><strong>${product.actual_lead_days} days</strong></div>
+      <div class="summary-metric"><span>Quality score</span><strong>${product.quality_score_pct.toFixed(1)}%</strong></div>
+      <div class="summary-metric"><span>Monthly volume</span><strong>${product.monthly_volume_units.toLocaleString()}</strong></div>
+    </div>
+    <p class="analysis-note">${riskExplanation}</p>
+    <div class="analysis-copy-grid">
+      <div><h4>Quality / defect concern</h4><p>${escapeHTML(product.defect_mode)}</p></div>
+      <div><h4>Likely root cause</h4><p>${escapeHTML(product.root_cause)}</p></div>
+      <div class="analysis-recommendation"><h4>Recommended action</h4><p>${escapeHTML(product.recommendations)}</p></div>
+    </div>
+  `;
+}
+
+async function loadMaterialAnalysis() {
+  try {
+    const result = await fetchJSON("/api/tier2/materials");
+    selectedMaterialRecords = result.materials;
+    document.getElementById("material-batch-count").innerText =
+      `${result.batch_count} lots · ${result.high_risk_count} high risk`;
+
+    document.getElementById("high-risk-materials").innerHTML = result.materials
+      .filter(material => material.risk_level === "HIGH")
+      .slice(0, 5)
+      .map(material => `
+        <button type="button" class="risk-product-item" data-lot="${escapeHTML(material.material_batch_id)}">
+          <span>${riskBadge(material.risk_level)}<strong>${escapeHTML(material.material_batch_id)}</strong><small>${escapeHTML(material.supplier_id)} · ${escapeHTML(material.material_risk_status)}</small></span>
+          <span class="delay-value">${Number(material.material_hardness_hv).toFixed(1)} HV</span>
+        </button>
+      `).join("") || '<p class="empty-state">No high-risk lots found in the material batch records.</p>';
+
+    const lotSelect = document.getElementById("material-lot-select");
+    lotSelect.innerHTML = result.materials.map(material =>
+      `<option value="${escapeHTML(material.material_batch_id)}">${escapeHTML(material.material_batch_id)} · ${escapeHTML(material.supplier_id)} · ${escapeHTML(material.risk_level)} RISK</option>`
+    ).join("");
+    document.getElementById("all-materials-table").innerHTML = result.materials.map(material => `
+      <tr data-lot="${escapeHTML(material.material_batch_id)}" tabindex="0" role="button" aria-label="Analyze raw material lot ${escapeHTML(material.material_batch_id)}">
+        <td>${riskBadge(material.risk_level)}</td>
+        <td><strong>${escapeHTML(material.material_batch_id)}</strong></td>
+        <td>${escapeHTML(material.supplier_id)}</td>
+        <td>${Number(material.material_hardness_hv).toFixed(1)} HV</td>
+        <td>${escapeHTML(material.material_risk_status)}</td>
+        <td>${Number(material.scrap_count).toLocaleString()}</td>
+        <td>$${Number(material.chargeback_amount_usd).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+      </tr>
+    `).join("");
+    if (result.materials.length) selectMaterialLot(lotSelect.value);
+  } catch (error) {
+    console.error("Material analysis load failed", error);
+    showLoadError("high-risk-materials", error);
+    showLoadError("all-materials-table", error);
+  }
+}
+
+function selectMaterialLot(lotId) {
+  if (!lotId) return;
+  const material = selectedMaterialRecords.find(item => item.material_batch_id === lotId);
+  if (!material) return;
+  document.getElementById("material-lot-select").value = lotId;
+  document.getElementById("material-lot-details").innerHTML = `
+    <div class="product-analysis-heading">
+      <div>${riskBadge(material.risk_level)}<h3>${escapeHTML(material.material_batch_id)}</h3><p>${escapeHTML(material.supplier_id)} · Snapshot ${escapeHTML(material.snapshot_date)}</p></div>
+      <div class="product-delay-callout"><span>Risk score</span><strong>${Number(material.risk_score).toFixed(0)} / 100</strong><small>${escapeHTML(material.material_risk_status)}</small></div>
+    </div>
+    <div class="summary-metric-grid">
+      <div class="summary-metric"><span>Hardness</span><strong>${Number(material.material_hardness_hv).toFixed(1)} HV</strong></div>
+      <div class="summary-metric"><span>Tensile strength</span><strong>${Number(material.tensile_strength_mpa).toFixed(1)} MPa</strong></div>
+      <div class="summary-metric"><span>Specification</span><strong>${Number(material.lower_spec_limit).toFixed(0)}–${Number(material.upper_spec_limit).toFixed(0)} HV</strong></div>
+      <div class="summary-metric"><span>Recorded scrap</span><strong>${Number(material.scrap_count).toLocaleString()} units</strong></div>
+      <div class="summary-metric"><span>Chargeback</span><strong>$${Number(material.chargeback_amount_usd).toLocaleString(undefined, { maximumFractionDigits: 2 })}</strong></div>
+    </div>
+    <p class="analysis-note">${material.risk_level === "HIGH" ? "This lot is flagged as high risk. Review its receiving measurements and run the downstream impact evaluation below before release." : "Use the receiving measurements and downstream impact evaluation below to confirm this lot is ready for production."}</p>
+  `;
+  const hardnessInput = document.getElementById("slider-mat-hardness");
+  const tensileInput = document.getElementById("slider-mat-tensile");
+  hardnessInput.value = Math.max(Number(hardnessInput.min), Math.min(Number(hardnessInput.max), Number(material.material_hardness_hv)));
+  tensileInput.value = Math.max(Number(tensileInput.min), Math.min(Number(tensileInput.max), Number(material.tensile_strength_mpa)));
+  document.getElementById("sel-mat-supplier").value = material.supplier_id;
+  updateMaterialEvaluator();
+}
+
+async function loadProductionAnalysis(search = "") {
+  try {
+    const [summary, productList] = await Promise.all([
+      fetchJSON("/api/tier1/production/summary"),
+      fetchJSON(`/api/tier1/finished-products${search ? `?search=${encodeURIComponent(search)}` : ""}`)
+    ]);
+    document.getElementById("production-metrics").innerHTML = `
+      <div class="summary-metric"><span>Recorded units produced</span><strong>${summary.total_units_produced.toLocaleString()}</strong></div>
+      <div class="summary-metric"><span>Recorded defects</span><strong>${summary.total_defects.toLocaleString()}</strong></div>
+      <div class="summary-metric"><span>Recorded defect rate</span><strong>${summary.defect_rate_pct.toFixed(2)}%</strong></div>
+      <div class="summary-metric"><span>Average line speed</span><strong>${summary.average_line_speed_upm.toFixed(1)} units/min</strong></div>
+    `;
+    document.getElementById("production-stations").innerHTML = summary.stations.map(station => `
+      <div class="production-station-card">
+        <strong>${escapeHTML(station.station_id)}</strong>
+        <span>${Number(station.units_produced).toLocaleString()} units · ${Number(station.defect_count).toLocaleString()} defects</span>
+        <small>${Number(station.average_line_speed_upm).toFixed(1)} units/min average</small>
+      </div>
+    `).join("");
+    const select = document.getElementById("finished-product-select");
+    select.innerHTML = productList.products.length
+      ? productList.products.map(product => `<option value="${escapeHTML(product.part_serial_no)}">${escapeHTML(product.part_serial_no)} · ${product.defect_flag ? "Inspection defect" : "Inspection pass"} · ${escapeHTML(product.material_batch_id)}</option>`).join("")
+      : '<option value="">No matching finished products found</option>';
+    if (productList.products.length) await loadFinishedProductDetails(select.value);
+    else document.getElementById("finished-product-details").innerHTML = '<p class="empty-state">No finished product serials match that search. Try another part number.</p>';
+  } catch (error) {
+    console.error("Production analysis load failed", error);
+    showLoadError("production-metrics", error);
+    showLoadError("finished-product-details", error);
+  }
+}
+
+function searchFinishedProducts() {
+  clearTimeout(finishedProductSearchTimer);
+  finishedProductSearchTimer = setTimeout(() => {
+    const query = document.getElementById("finished-product-search").value.trim();
+    loadProductionAnalysis(query);
+  }, 150);
+}
+
+async function loadFinishedProductDetails(serial) {
+  if (!serial) return;
+  try {
+    const product = await fetchJSON(`/api/tier1/finished-products/${encodeURIComponent(serial)}`);
+    const isDefect = Number(product.defect_flag) === 1;
+    document.getElementById("finished-product-details").innerHTML = `
+      <div class="product-analysis-heading">
+        <div>${riskBadge(isDefect ? "HIGH" : product.material_risk_status === "MARGINAL_HIGH" ? "MODERATE" : "LOW")}<h3>${escapeHTML(product.part_serial_no)}</h3><p>Finished part · ${escapeHTML(product.fastener_cycle_id)}</p></div>
+        <div class="product-delay-callout"><span>Inspection result</span><strong>${isDefect ? "Defect detected" : "Pass"}</strong><small>${escapeHTML(product.failure_mode)}</small></div>
+      </div>
+      <div class="summary-metric-grid">
+        <div class="summary-metric"><span>Defect severity</span><strong>${Number(product.defect_severity)} / 5</strong></div>
+        <div class="summary-metric"><span>Manufacturing station</span><strong>${escapeHTML(product.station_id)}</strong></div>
+        <div class="summary-metric"><span>Material lot</span><strong>${escapeHTML(product.material_batch_id)}</strong></div>
+        <div class="summary-metric"><span>Supplier</span><strong>${escapeHTML(product.supplier_id)}</strong></div>
+        <div class="summary-metric"><span>Material hardness</span><strong>${Number(product.material_hardness_hv).toFixed(1)} HV</strong></div>
+        <div class="summary-metric"><span>Production shift</span><strong>${escapeHTML(product.shift_id)}</strong></div>
+        <div class="summary-metric"><span>Line speed</span><strong>${Number(product.line_speed_upm).toFixed(1)} units/min</strong></div>
+        <div class="summary-metric"><span>Torque status</span><strong>${escapeHTML(product.torque_status)}</strong></div>
+      </div>
+      <div class="analysis-copy-grid">
+        <div><h4>Inspection action</h4><p>${escapeHTML(product.action_code)}</p></div>
+        <div><h4>Process telemetry</h4><p>${Number(product.peak_torque_nm).toFixed(2)} Nm torque · ${Number(product.shutoff_angle_deg).toFixed(1)}° shutoff angle</p></div>
+      </div>
+    `;
+  } catch (error) {
+    console.error("Finished product detail load failed", error);
+    showLoadError("finished-product-details", error);
+  }
+}
 
 // Tab Switcher
 function switchTab(tabId) {
   const buttons = document.querySelectorAll(".nav-tab-btn");
-  buttons.forEach(btn => btn.classList.remove("active"));
+  buttons.forEach(btn => {
+    btn.classList.remove("active");
+    btn.removeAttribute("aria-current");
+  });
   
   const targetBtn = {
     "tab-overview": "tab-btn-overview",
@@ -32,7 +367,9 @@ function switchTab(tabId) {
   }[tabId];
 
   if (targetBtn && document.getElementById(targetBtn)) {
-    document.getElementById(targetBtn).classList.add("active");
+    const activeButton = document.getElementById(targetBtn);
+    activeButton.classList.add("active");
+    activeButton.setAttribute("aria-current", "page");
   }
 
   const contents = document.querySelectorAll(".tab-content");

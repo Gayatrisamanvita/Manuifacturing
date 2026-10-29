@@ -8,20 +8,23 @@ Welcome to the **FactorySmart AI™ REST API**. This enterprise API platform ser
 
 | Service Mode | Base URL | Interactive Docs (Swagger) | Alternative Docs (ReDoc) |
 | :--- | :--- | :--- | :--- |
-| **Unified API (All Tiers + Supplier Router + Web)** | `http://localhost:8000` | [`http://localhost:8000/docs`](http://localhost:8000/docs) | [`http://localhost:8000/redoc`](http://localhost:8000/redoc) |
+| **Unified API (All Tiers + Supplier Router + Web)** | `http://localhost:8001` | [`http://localhost:8001/docs`](http://localhost:8001/docs) | [`http://localhost:8001/redoc`](http://localhost:8001/redoc) |
 | **Standalone Supplier Microservice** | `http://localhost:8001` | [`http://localhost:8001/docs`](http://localhost:8001/docs) | [`http://localhost:8001/redoc`](http://localhost:8001/redoc) |
 
 ### Starting the API Server
 ```bash
-# Launch default Unified API on port 8000
+# Launch default Unified API on port 8001
 python run_api.py
 
 # Launch on custom port with auto-reload
-python run_api.py --port 8000 --reload
+python run_api.py --port 8001 --reload
 
 # Launch Standalone Supplier microservice on port 8001
 python run_api.py --mode supplier --port 8001
 ```
+
+The Streamlit dashboard runs separately on port `8000`; its API base defaults to
+`http://127.0.0.1:8001` and can be overridden with `MANUFACTURING_API_URL`.
 
 Or on Windows:
 ```cmd
@@ -63,10 +66,90 @@ You can pass your API key via any of the following 3 mechanisms:
 
 ## 3. Endpoints Catalog
 
+### Model Artifacts & Per-Model Inference
+
+The six files below are the model/configuration artifacts used by the unified API and are stored in `models/`. `GET /api/models` reports artifact presence plus whether each engine is initialized and ready. The supplier analytics engines read project data files directly, so they do not have pickle artifacts.
+
+| Model / Engine | Artifact | Type | Direct inference endpoint(s) |
+| :--- | :--- | :--- | :--- |
+| `ShiftDefectPredictor` | `models/shift_defect_predictor.pkl` | Trained ML | `POST /api/tier1/predict_shift` |
+| `FailureModeClassifier` | `models/failure_mode_classifier.pkl` | Trained ML + SHAP | `POST /api/tier1/predict_failure_mode`, `POST /api/tier1/simulate` |
+| `PrescriptiveActionEngine` | `models/prescriptive_action_engine.pkl` | Rule/configuration engine | `POST /api/tier1/recommend_action`, `POST /api/tier1/simulate` |
+| `MarginalBatchRiskClassifier` | `models/marginal_batch_classifier.pkl` | Trained ML | `POST /api/tier2/classify_material`, `POST /api/tier2/evaluate_material` |
+| `DownstreamImpactForecaster` | `models/downstream_impact_forecaster.pkl` | Trained ML | `POST /api/tier2/forecast_impact`, `POST /api/tier2/evaluate_material` |
+| `AdaptiveParameterCompensator` | `models/adaptive_parameter_compensator.pkl` | Rule/configuration engine | `POST /api/tier2/compensate`, `POST /api/tier2/evaluate_material` |
+| `SupplierQualityTrendAnalyzer` | Not applicable (reads data files) | Data analytics | `GET /api/tier3/suppliers` |
+| `WarrantyTraceabilityEngine` | Not applicable (reads data files) | Data analytics | `GET /api/tier3/trace/{claim_id}` |
+| `ToleranceLeakageAnalyzer` | Not applicable (reads data files) | Data analytics | `GET /api/tier3/tolerance_gap` |
+| `SCARGenerator` | Not applicable (reads data files) | Data analytics | `GET /api/tier3/scar/{supplier_id}` |
+
+The combined `/api/tier1/simulate` and `/api/tier2/evaluate_material` routes remain available; the direct routes above allow each individual model or engine to be called independently. `/api/models` does not expose filesystem paths outside the project.
+
+### Dashboard monitoring endpoints
+
+- `GET /api/tier2/materials` returns incoming-batch measurements, receiving QC status, scrap and
+  chargeback records, and per-batch risk probability/tier from the trained Random Forest.
+  Incoming-batch counts describe recorded receipts only; warehouse stock and material purchase
+  costs are not available in the source data.
+- `GET /api/tier1/operations/monitor` returns the latest recorded date's station/shift production,
+  machine-state and inspection summaries, plus LightGBM predicted failure-mode counts. Faulted
+  and idle hours are estimates from telemetry sample counts and the median sample interval, not
+  maintenance work-order durations or live machine telemetry.
+- `GET /api/tier1/production/summary` returns recorded production output, logged defects, rates,
+  and station-level production totals.
+
+The Streamlit dashboard calls these APIs and the existing model inference endpoints. Its shift
+target is entered by the operator because no work-order target records are included in the data.
+Reported target attainment compares that entered target with the latest historical shift and is
+not a recorded work-order result.
+
+#### Shift defect prediction — `POST /api/tier1/predict_shift`
+Provide shift-level planned volume and telemetry for each station to receive predicted defect counts and station risk rankings. Include the stations you want ranked (each station ID at most once).
+
+```json
+{
+  "shift_id": "SHIFT_1",
+  "planned_units": 1200,
+  "line_speed_upm": 47.2,
+  "std_line_speed_upm": 1.8,
+  "stations": [
+    {
+      "station_id": "ST-10",
+      "spindle_temp_c": 55.1,
+      "vibration_rms_g": 1.4,
+      "system_pressure_psi": 115.0,
+      "tool_wear_index": 42.0,
+      "peak_torque_nm": 12.5,
+      "shutoff_angle_deg": 360.0
+    }
+  ]
+}
+```
+
+#### Failure mode classification — `POST /api/tier1/predict_failure_mode`
+Accepts the sensor/material telemetry fields from `/api/tier1/simulate` and returns the predicted failure mode, confidence, and top SHAP contributors without running the prescriptive engine.
+
+#### Prescriptive action — `POST /api/tier1/recommend_action`
+Request fields: `predicted_failure_mode`, `current_telemetry` (the same telemetry fields accepted by `/api/tier1/simulate`), and optional `top_contributors` (an array of feature/value/SHAP-impact/direction objects).
+
+#### Individual raw-material engines
+The following all accept the same material request shape as `/api/tier2/evaluate_material` (`material_hardness_hv`, `tensile_strength_mpa`, `lower_spec_limit`, `upper_spec_limit`, `supplier_id`):
+
+- `POST /api/tier2/classify_material`: risk probability, risk tier, inspection pass/fail, and recommendation.
+- `POST /api/tier2/forecast_impact`: expected severity, scrap count/cost, likely failure mode, and physical root cause.
+- `POST /api/tier2/compensate`: adaptive machine recipe adjustments.
+
+`batch_size_units` is optional on these unified API requests. When supplied to `forecast_impact` or `evaluate_material`, the trained scrap estimate is scaled from the average lot size used for training and capped at the requested batch size. An out-of-spec hardness result is returned as `OUT_OF_SPEC_REJECT`; `lower_spec_limit` must be less than `upper_spec_limit`.
+
+The Gradient Boosting regressors predict severity and scrap. The likely failure mode and physical root-cause text are assigned by the documented hardness-threshold rules (`failure_mode_method: "HARDNESS_THRESHOLD_RULES"`), not by a separate failure-mode classifier.
+
 ### A. System & Operational Health
 - `GET /health`: Unified API health check and registry of loaded models.
+- `GET /api/models`: Artifact inventory, endpoint mapping, and engine readiness.
 - `GET /api/overview`: JSON summary of model performance, cross-validation metrics, and financial recovery demand.
 - `GET /api/v1/supplier/health`: Supplier API health and catalog status.
+
+The unified health response reports `status: "degraded"` and a `model_load_errors` map when model artifacts or analytics engines fail to initialize; failed engines are not silently reported as ready.
 
 ### B. Tier 1: Manufacturing Issue Level
 #### `POST /api/tier1/simulate`
@@ -146,10 +229,12 @@ Specifically flags lots falling within the **216.0 – 230.0 HV tolerance leakag
 #### `POST /api/v1/supplier/certify-lot` (or `/comprehensive-qc`) *(Requires API Key)*
 Runs a unified 3-model audit (Marginal Batch Classifier + Downstream Impact Forecaster + Adaptive Parameter Compensator) and returns pre-shipment certification.
 
+The adaptive-recipe response returns the compensator's calculated `torque_offset_nm`, `angle_offset_deg`, speed reduction, lubrication mode, and engineering guidance. Forecast scrap counts and cost are scaled to the requested `batch_size_units`.
+
 ---
 
 ### D. Tier 3: Supplier & Vendor Intelligence
-- `GET /api/tier3/suppliers` or `GET /api/v1/supplier/vendors`: Returns 30-day quality trajectories and risk ratings.
+- `GET /api/tier3/suppliers` or `GET /api/v1/supplier/vendors`: Returns historical quality snapshots and risk ratings. The response includes `data_as_of` and `trend_basis`; the checked-in history does not support a current rolling 30-day trend.
 - `GET /api/tier3/trace/{claim_id}`: End-to-end genealogy DAG linking warranty claims back to part serial numbers, spindle telemetry, material heat lots, and vendor IDs.
 - `GET /api/tier3/tolerance_gap`: Proof of the 216–230 HV tolerance leakage zone and recommended tightened Upper Specification Limit.
 - `GET /api/tier3/scar/{supplier_id}`: Official 8D Supplier Corrective Action Request document and itemized financial claim demand.

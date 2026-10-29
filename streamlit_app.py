@@ -1,2355 +1,1076 @@
-"""
-FactorySmart AI  -  Enterprise Manufacturing Quality Intelligence Suite
-Clean, elegant executive demo interface matching the Six Sigma design system.
-
-Structured across 4 comprehensive operational tiers:
-1. Supplier / Vendor Level Issues (with product catalog, lead times, delayed products, and per-product recommendations)
-2. Raw Materials Level Issues (Full 199-batch master, risk assessment, safety stock models, and shortage mitigation without excess inventory)
-3. Manufacturing Level (Factories & Units: meaningful targets, machine health, downtime vs target, root causes, resolution & preventive actions)
-4. Production Level (Lines & Orders: planned vs actual quantities, completion times, bottlenecks, individual order recommendations)
-"""
+"""Streamlit dashboard for the repository's trained manufacturing ML models."""
 
 import os
 import sys
-import re
-import base64
-import pandas as pd
-import numpy as np
-import streamlit as st
-import plotly.express as px
-import plotly.graph_objects as go
 
-# Ensure project root in sys.path
-PROJECT_ROOT = os.path.abspath(os.path.dirname(__file__))
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import requests
+import streamlit as st
+
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
+DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
+API_BASE_URL = os.environ.get("MANUFACTURING_API_URL", "http://127.0.0.1:8001").rstrip("/")
 
-from src.models import load_all_models
 
 @st.cache_resource
-def get_ml_models():
-    """
-    Cached ML Model Registry: Loads all 10 serialized machine learning models
-    and analytical engines from the models/ and data/ directories.
-    """
-    try:
-        return load_all_models(
-            models_dir=os.path.join(PROJECT_ROOT, "models"),
-            data_dir=os.path.join(PROJECT_ROOT, "data")
-        )
-    except Exception as e:
-        print(f"Warning loading ML models: {e}")
-        return {}
+def load_dashboard_models():
+    from src.data_loader import DataLoader
+    from src.models import load_all_models
+
+    models = load_all_models(models_dir=MODELS_DIR, data_dir=DATA_DIR)
+    forecaster = models.get("downstream_impact_forecaster")
+    if forecaster is not None and not forecaster.reference_batch_size:
+        batches = DataLoader(data_dir=DATA_DIR).get_material_batch_summary()
+        forecaster.reference_batch_size = float(batches["total_parts"].mean())
+    return models
 
 
-# -----------------------------------------------------------------------------
-# 1. PAGE SETUP & HTML CLEANER (ELIMINATES RAW HTML LEAKS)
-# -----------------------------------------------------------------------------
-
-def render_html(html_str):
-    """
-    Renders HTML without letting Markdown treat 4-space indentation as a code block.
-    Strips leading and trailing spaces from every line.
-    """
-    cleaned = "\n".join(line.strip() for line in str(html_str).strip().split("\n"))
-    st.markdown(cleaned, unsafe_allow_html=True)
-
-st.set_page_config(
-    page_title="FactorySmart AI  -  Quality Intelligence Suite",
-    page_icon="[Tier 4]",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# -----------------------------------------------------------------------------
-# 2. MASCOT ASSET
-# -----------------------------------------------------------------------------
-mascot_path = os.path.join(os.path.dirname(__file__), "assets", "factory_mascot.jpg")
-mascot_b64 = ""
-if os.path.exists(mascot_path):
-    with open(mascot_path, "rb") as f:
-        mascot_b64 = base64.b64encode(f.read()).decode("utf-8")
-
-# -----------------------------------------------------------------------------
-# 3. FAST CACHED DATA LOADER
-# -----------------------------------------------------------------------------
 @st.cache_data
-def load_datasets():
-    data_dir = "data"
-    mat_df = pd.read_csv(os.path.join(data_dir, "material_batch_master.csv"))
-    supp_df = pd.read_csv(os.path.join(data_dir, "supplier_quality_history.csv"))
-    warr_df = pd.read_csv(os.path.join(data_dir, "warranty_field_claims.csv"))
-    warr_enriched = warr_df.merge(mat_df, on="material_batch_id", how="left")
+def load_dashboard_data():
+    from src.data_loader import DataLoader
 
-    parts_df = pd.read_csv(
-        os.path.join(data_dir, "part_inspection_defect_logs.csv"),
-        nrows=5000
+    data_loader = DataLoader(data_dir=DATA_DIR)
+    material = data_loader.load_raw("material_batches")
+    supplier_history = data_loader.load_raw("supplier_history")
+    warranty = data_loader.load_raw("warranty_claims")
+    catalog = data_loader.load_raw("supplier_products")
+    warranty = warranty.merge(
+        material[["material_batch_id", "supplier_id"]],
+        on="material_batch_id",
+        how="left",
     )
-    torq_df = pd.read_csv(
-        os.path.join(data_dir, "torque_cycle_logs.csv"),
-        nrows=5000
-    )
-    sample_parts = parts_df.merge(torq_df, on="fastener_cycle_id", how="left")
-    sample_parts = sample_parts.merge(mat_df[["material_batch_id", "material_hardness_hv"]], on="material_batch_id", how="left")
-
-    # Full 199 Material Batches Enriched with Live ML Model Risk Inference
-    models = get_ml_models()
-    batch_clf = models.get("marginal_batch_classifier") if models else None
-    compensator = models.get("adaptive_parameter_compensator") if models else None
-
-    mat_enriched = mat_df.copy()
-    risk_info = []
-    risk_probs = []
-    torque_offsets = []
-    angle_offsets = []
-
-    for _, r in mat_enriched.iterrows():
-        # ML Model Inference: MarginalBatchRiskClassifier (Random Forest)
-        if batch_clf:
-            row_df = pd.DataFrame([r])
-            pred_risk = batch_clf.predict_batch_risk(row_df)
-            prob = pred_risk["downstream_risk_probability"]
-            tier = pred_risk["batch_risk_tier"]
-        else:
-            prob = 0.85 if r["material_hardness_hv"] >= 216.0 else (0.45 if r["material_hardness_hv"] >= 210.0 else 0.05)
-            tier = "HIGH_RISK_MARGINAL" if prob >= 0.6 else ("BORDERLINE_MONITOR" if prob >= 0.3 else "STANDARD_PASS")
-
-        # ML Model Inference: AdaptiveParameterCompensator
-        if compensator:
-            comp_res = compensator.compute_offsets(r["material_hardness_hv"], r["tensile_strength_mpa"])
-            t_off = comp_res["torque_offset_nm"]
-            a_off = comp_res["angle_offset_deg"]
-        else:
-            t_off, a_off = 0.0, 0.0
-
-        risk_probs.append(f"{prob * 100:.1f}%")
-        torque_offsets.append(f"{'+' if t_off > 0 else ''}{t_off} Nm")
-        angle_offsets.append(f"{'+' if a_off > 0 else ''}{a_off}°")
-
-        h = r["material_hardness_hv"]
-        scrap = r["scrap_count"]
-        status = r["material_risk_status"]
-        if tier == "HIGH_RISK_MARGINAL" or h >= 216.0 or status == "MARGINAL_HIGH" or scrap >= 200:
-            risk_info.append(("[Critical] CRITICAL RISK", "badge-pill-red", f"ML Downstream Defect Risk: {prob*100:.1f}%. Hardness >216 HV tolerance leakage or scrap >200 parts; requires adaptive torque offset ({'+' if t_off > 0 else ''}{t_off} Nm)."))
-        elif tier == "BORDERLINE_MONITOR" or h >= 210.0 or scrap >= 100 or status == "MARGINAL_LOW":
-            risk_info.append(("[Elevated] ELEVATED RISK", "badge-pill-orange", f"ML Downstream Defect Risk: {prob*100:.1f}%. Hardness approaching 216 HV boundary; requires active torque recipe offset and line monitoring."))
-        else:
-            risk_info.append(("[Optimal] NORMAL / SAFE", "badge-pill-green", f"ML Downstream Defect Risk: {prob*100:.1f}%. Fully within nominal safe core metallurgical envelope (195-210 HV); standard production recipe."))
-
-    mat_enriched["ML_Risk_Prob"] = risk_probs
-    mat_enriched["Adaptive_Torque_Offset"] = torque_offsets
-    mat_enriched["Adaptive_Angle_Offset"] = angle_offsets
-    mat_enriched["Risk_Level"] = [r[0] for r in risk_info]
-    mat_enriched["Risk_Badge"] = [r[1] for r in risk_info]
-    mat_enriched["Risk_Explanation"] = [r[2] for r in risk_info]
-    mat_enriched["Safe_Margin_HV"] = (216.0 - mat_enriched["material_hardness_hv"]).round(2)
-    mat_enriched["parent_sku"] = mat_enriched["supplier_id"].map({
-        "VENDOR_B": "RAW-4140 (AISI 4140 Steel)",
-        "VENDOR_A": "RAW-ST88 / M10 (Fastener Bar)",
-        "VENDOR_C": "RAW-NICR / TI01 (Bushings & Ti)"
-    })
-
-    # Supplier Products Master
-    supplier_products = {
-        "VENDOR_A": [
-            {
-                "sku": "FST-1001",
-                "name": "M10x1.5 Grade 10.9 Fastener Bar Stock",
-                "category": "Raw Bar Stock",
-                "target_lead_days": 12,
-                "actual_lead_days": 14,
-                "delay_days": 2,
-                "status": "[Optimal] On Schedule (Normal Freight Buffer)",
-                "status_badge": "status-badge-green",
-                "risk_tier": "[Optimal] Low Risk (Optimal)",
-                "monthly_vol": "12,000 units",
-                "quality_score": "96.2%",
-                "defect_mode": "Dimensional Diameter Drift (+/-0.04mm)",
-                "root_cause": "Cold-drawing coil cooling cycle prolonged at supplier mill (within normal freight buffer).",
-                "recs": "Maintain standard 2-day PO lead time buffer; keep 3-day safety stock at dock; routine certified micrometer inspection.",
-                "is_delayed": False
-            },
-            {
-                "sku": "FST-1002",
-                "name": "High-Tensile Threaded Studs ST-88",
-                "category": "Threaded Fasteners",
-                "target_lead_days": 15,
-                "actual_lead_days": 21,
-                "delay_days": 6,
-                "status": "[Critical] Critical Delay (+6d Bottleneck)",
-                "status_badge": "status-badge-red",
-                "risk_tier": "[Critical] Critical Delay Risk",
-                "monthly_vol": "8,500 units",
-                "quality_score": "92.1%",
-                "defect_mode": "Thread Pitch Micro-Wear & Debur Burrs",
-                "root_cause": "Thread-rolling die changeover bottleneck and worn rolling dies at supplier facility.",
-                "recs": "Reserve dedicated tooling slot with supplier; authorize batch pre-staging of 2,000 blank studs; enforce die replacement every 50,000 cycles.",
-                "is_delayed": True
-            },
-            {
-                "sku": "FST-1003",
-                "name": "Cold-Forged Flange Bolts CB-12",
-                "category": "Bolts & Studs",
-                "target_lead_days": 10,
-                "actual_lead_days": 10,
-                "delay_days": 0,
-                "status": "[Optimal] On Schedule (Zero Delay)",
-                "status_badge": "status-badge-green",
-                "risk_tier": "[Optimal] Zero Risk (Benchmark)",
-                "monthly_vol": "25,000 units",
-                "quality_score": "98.4%",
-                "defect_mode": "None (Nominal Pass)",
-                "root_cause": "Stable automated multi-station cold heading press with zero downtime.",
-                "recs": "Maintain current release schedule; qualify Vendor A as benchmark preferred supplier for flange fasteners.",
-                "is_delayed": False
-            },
-            {
-                "sku": "FST-1004",
-                "name": "Zinc-Plated Socket Head Cap Screws",
-                "category": "Fastener Screws",
-                "target_lead_days": 11,
-                "actual_lead_days": 12,
-                "delay_days": 1,
-                "status": "[Optimal] On Schedule (Nominal Buffer)",
-                "status_badge": "status-badge-green",
-                "risk_tier": "[Optimal] Low Risk (Optimal)",
-                "monthly_vol": "14,000 units",
-                "quality_score": "97.0%",
-                "defect_mode": "Plating Thickness Non-Uniformity (<5µm)",
-                "root_cause": "Normal electroplating barrel batch curing cycle turnaround.",
-                "recs": "Implement rolling release blanket POs to smooth lot sizes; verify hydrogen embrittlement bake certs.",
-                "is_delayed": False
-            }
-        ],
-        "VENDOR_B": [
-            {
-                "sku": "STL-2001",
-                "name": "AISI 4140 Cold-Drawn Alloy Steel Bar",
-                "category": "Structural Alloy Steel",
-                "target_lead_days": 18,
-                "actual_lead_days": 28,
-                "delay_days": 10,
-                "status": "[Critical] Severe Bottleneck (+10d)",
-                "status_badge": "status-badge-red",
-                "risk_tier": "[Critical] Critical Risk (Hardness Drift)",
-                "monthly_vol": "18,500 units",
-                "quality_score": "87.1%",
-                "defect_mode": "Excess Hardness (>216 HV) & Tightness Variation",
-                "root_cause": "Induction hardening furnace queue backlog and mill heat-treat quenching inconsistency.",
-                "recs": "Immediate Action: Split 40% allocation to secondary qualified supplier; enforce receiving rejection threshold at 216.0 HV; issue formal $2.33M SCAR recovery claim.",
-                "is_delayed": True
-            },
-            {
-                "sku": "STL-2002",
-                "name": "Heavy-Duty Spline Shaft Blanks",
-                "category": "Shafts & Rotors",
-                "target_lead_days": 20,
-                "actual_lead_days": 31,
-                "delay_days": 11,
-                "status": "[Critical] Severe Bottleneck (+11d)",
-                "status_badge": "status-badge-red",
-                "risk_tier": "[Critical] Critical Risk (Machining Bottleneck)",
-                "monthly_vol": "6,200 units",
-                "quality_score": "85.3%",
-                "defect_mode": "Concentricity Runout & Surface Pitting",
-                "root_cause": "5-axis roughing machine downtime and carbide insert shortages at supplier shop.",
-                "recs": "Shift procurement to pre-machined blanks; conduct on-site supplier process audit; mandate dual-sourcing contract clause.",
-                "is_delayed": True
-            },
-            {
-                "sku": "STL-2003",
-                "name": "Precision Ground Pivot Pins PP-04",
-                "category": "Pins & Sleeves",
-                "target_lead_days": 16,
-                "actual_lead_days": 24,
-                "delay_days": 8,
-                "status": "[Critical] High Delay (+8d)",
-                "status_badge": "status-badge-red",
-                "risk_tier": "[Critical] High Delay Risk",
-                "monthly_vol": "9,000 units",
-                "quality_score": "89.5%",
-                "defect_mode": "OD Taper & Surface Roughness (>Ra 0.8)",
-                "root_cause": "Centerless grinding wheel glazing and manual micrometer calibration drift.",
-                "recs": "Mandate in-process automated laser gauging at supplier site before batch dispatch; buffer 8 days in warehouse.",
-                "is_delayed": True
-            },
-            {
-                "sku": "STL-2004",
-                "name": "Torque Reaction Sleeves TRS-20",
-                "category": "Coupling Sleeves",
-                "target_lead_days": 14,
-                "actual_lead_days": 19,
-                "delay_days": 5,
-                "status": "[Elevated] Moderate Delay (+5d)",
-                "status_badge": "status-badge-orange",
-                "risk_tier": "[Elevated] Moderate Risk (Watchlist)",
-                "monthly_vol": "7,800 units",
-                "quality_score": "91.0%",
-                "defect_mode": "Keyway Width Out of Tolerance",
-                "root_cause": "Subcontracted heat-treatment logistics turnaround latency.",
-                "recs": "Approve internal finish induction hardening at Detroit hub to eliminate third-party logistics latency.",
-                "is_delayed": False
-            }
-        ],
-        "VENDOR_C": [
-            {
-                "sku": "ALY-3001",
-                "name": "Titanium-Alloy Structural Brackets TB-01",
-                "category": "Aerospace & Lightweight Alloy",
-                "target_lead_days": 14,
-                "actual_lead_days": 16,
-                "delay_days": 2,
-                "status": "[Optimal] On Schedule (Port Customs Buffer)",
-                "status_badge": "status-badge-green",
-                "risk_tier": "[Optimal] Low Risk (Optimal)",
-                "monthly_vol": "5,400 units",
-                "quality_score": "98.0%",
-                "defect_mode": "Minor Surface Anodize Color Variation",
-                "root_cause": "Raw titanium ingot customs clearance transit buffer (normal international shipping window).",
-                "recs": "Authorize 30-day bonded warehouse reserve at port of entry; establish electronic pre-clearance.",
-                "is_delayed": False
-            },
-            {
-                "sku": "ALY-3002",
-                "name": "Nickel-Chromium High-Wear Bushings",
-                "category": "Sintered Bushings",
-                "target_lead_days": 15,
-                "actual_lead_days": 22,
-                "delay_days": 7,
-                "status": "[Critical] Bottleneck Delay (+7d)",
-                "status_badge": "status-badge-red",
-                "risk_tier": "[Critical] High Delay Risk",
-                "monthly_vol": "11,200 units",
-                "quality_score": "93.8%",
-                "defect_mode": "Sintering Porosity Density Variance",
-                "root_cause": "Sintering vacuum furnace batch cycle capacity bottleneck at supplier plant.",
-                "recs": "Request vendor allocate second sintering furnace chamber during peak demand; increase plant safety stock from 5 to 9 days.",
-                "is_delayed": True
-            },
-            {
-                "sku": "ALY-3003",
-                "name": "Pre-Hardened Tool Steel Inserts TI-09",
-                "category": "Tooling & Carbide",
-                "target_lead_days": 12,
-                "actual_lead_days": 13,
-                "delay_days": 1,
-                "status": "[Optimal] On Schedule (Nominal Buffer)",
-                "status_badge": "status-badge-green",
-                "risk_tier": "[Optimal] Low Risk (Optimal)",
-                "monthly_vol": "8,000 units",
-                "quality_score": "97.6%",
-                "defect_mode": "None (Nominal Pass)",
-                "root_cause": "High CNC machining repeatability, minor freight buffer within acceptable tolerance.",
-                "recs": "Maintain Kanban pull signals; lock in multi-year volume pricing with Vendor C.",
-                "is_delayed": False
-            },
-            {
-                "sku": "ALY-3004",
-                "name": "Micro-Alloyed Connecting Link Pins",
-                "category": "Linkage Hardware",
-                "target_lead_days": 10,
-                "actual_lead_days": 10,
-                "delay_days": 0,
-                "status": "[Optimal] On Schedule (Benchmark Zero-Defect)",
-                "status_badge": "status-badge-green",
-                "risk_tier": "[Optimal] Zero Risk (Benchmark)",
-                "monthly_vol": "16,500 units",
-                "quality_score": "99.1%",
-                "defect_mode": "Zero Defect Baseline",
-                "root_cause": "Fully automated continuous wire-feed cold heading line with in-line laser gauging.",
-                "recs": "Adopt as benchmark supplier standard across company plants.",
-                "is_delayed": False
-            }
-        ]
-    }
-
-    # Raw Material Inventory Model (Safety stock & shortage avoidance)
-    raw_materials_inventory = [
-        {
-            "sku": "RAW-4140",
-            "name": "AISI 4140 Cold-Drawn Alloy Steel Bar",
-            "supplier": "VENDOR_B",
-            "current_stock": 1850,
-            "unit": "kg",
-            "daily_demand": 450,
-            "days_cover": 4.1,
-            "lead_time_days": 28,
-            "safety_stock": 3250,
-            "reorder_point": 15850,
-            "eoq": 9500,
-            "risk_tier": "CRITICAL RISK",
-            "risk_badge": "status-badge-red",
-            "risk_factors": "Stock below safety stock (4.1 days vs 7.2 days needed); supplier lead time slipped to 28 days; incoming hardness drift >216 HV.",
-            "actions_to_avoid_shortage": "Expedite 4,000 kg split shipment via expedited freight; apply adaptive torque offset (+0.38 Nm) to safely process existing 1,850 kg lot without scrap.",
-            "actions_to_avoid_excess": "Cap max order quantity at 9,500 kg (EOQ) to prevent holding excess dormant inventory and tied-up capital."
-        },
-        {
-            "sku": "RAW-ST88",
-            "name": "High-Tensile Threaded Stud Stock (ST-88)",
-            "supplier": "VENDOR_A",
-            "current_stock": 3100,
-            "unit": "units",
-            "daily_demand": 500,
-            "days_cover": 6.2,
-            "lead_time_days": 21,
-            "safety_stock": 4200,
-            "reorder_point": 14700,
-            "eoq": 8000,
-            "risk_tier": "HIGH RISK",
-            "risk_badge": "status-badge-orange",
-            "risk_factors": "Current stock (3,100) below required safety stock (4,200); thread rolling delay adds 6 days.",
-            "actions_to_avoid_shortage": "Trigger immediate PO release at 14,700 ROP; request 2-batch staggered delivery (4,000 units every 10 days).",
-            "actions_to_avoid_excess": "Avoid bulk ordering above 8,000 units to minimize shelf corrosion risk and holding expenses."
-        },
-        {
-            "sku": "RAW-M10",
-            "name": "Fastener Bar Stock M10x1.5 Grade 10.9",
-            "supplier": "VENDOR_A",
-            "current_stock": 9400,
-            "unit": "units",
-            "daily_demand": 800,
-            "days_cover": 11.7,
-            "lead_time_days": 14,
-            "safety_stock": 4800,
-            "reorder_point": 16000,
-            "eoq": 12000,
-            "risk_tier": "CONTROLLED (OPTIMAL)",
-            "risk_badge": "status-badge-green",
-            "risk_factors": "Healthy buffer (11.7 days cover); low scrap rate (1.2%); delivery on 14-day schedule.",
-            "actions_to_avoid_shortage": "Maintain automated ERP trigger at 16,000 ROP; weekly supplier visibility sync.",
-            "actions_to_avoid_excess": "Keep strict pull replenishment aligned with master production schedule."
-        },
-        {
-            "sku": "RAW-NICR",
-            "name": "Nickel-Chromium Sintered Bushing Alloy",
-            "supplier": "VENDOR_C",
-            "current_stock": 2400,
-            "unit": "units",
-            "daily_demand": 350,
-            "days_cover": 6.8,
-            "lead_time_days": 22,
-            "safety_stock": 3150,
-            "reorder_point": 10850,
-            "eoq": 5500,
-            "risk_tier": "ELEVATED RISK",
-            "risk_badge": "status-badge-orange",
-            "risk_factors": "Lead time volatility (+7 days delay); sintering furnace batch constraints at vendor.",
-            "actions_to_avoid_shortage": "Establish 1,000 unit Vendor-Managed Inventory (VMI) consignment buffer at local freight hub.",
-            "actions_to_avoid_excess": "Do not pre-pay stock; VMI consignment ensures inventory is only paid for when pulled to assembly floor."
-        },
-        {
-            "sku": "RAW-TI01",
-            "name": "Titanium-Alloy Structural Plate TB-01",
-            "supplier": "VENDOR_C",
-            "current_stock": 3800,
-            "unit": "units",
-            "daily_demand": 200,
-            "days_cover": 19.0,
-            "lead_time_days": 16,
-            "safety_stock": 1600,
-            "reorder_point": 4800,
-            "eoq": 3000,
-            "risk_tier": "EXCESS STOCK WARNING",
-            "risk_badge": "status-badge-blue",
-            "risk_factors": "Stock is 2.38x above safety stock ceiling; $48,000 in tied-up working capital.",
-            "actions_to_avoid_shortage": "Zero stockout risk. Safe for the next 19 operating days.",
-            "actions_to_avoid_excess": "Pause upcoming replenishment PO for 12 days to burn off excess buffer down to 1,600 units; release capital."
-        }
-    ]
-
-    # Manufacturing Units Master with Meaningful Targets & Clear Variance
-    mfg_units = {
-        "UNIT_1": {
-            "name": "[Tier 3] Factory Unit 1  -  Detroit Precision Hub (Assembly & Fastening)",
-            "location": "Detroit, MI",
-            "focus": "Powertrain Fastening & Automated Assembly Cells",
-            "total_machines": 28,
-            "active_machines": 25,
-            "avail_target": "100% Operational Readiness",
-            "avail_status": "3 machines offline in maintenance (89.3% availability)",
-            "avail_color": "#D97706",
-            "downtime_hours": 4.8,
-            "downtime_pct": "6.7%",
-            "downtime_target": "Target: < 1.5h per 8h shift (Max 2.0% loss)",
-            "downtime_status": "[Critical] +3.3h Over Allowed Downtime Ceiling",
-            "downtime_color": "#DC2626",
-            "mfg_delays_hrs": 3.2,
-            "delays_target": "Target: 0.0h (Zero-Delay On-Time SLA)",
-            "delays_status": "[Critical] 3.2h Backlog Behind Customer Dispatch Window",
-            "delays_color": "#DC2626",
-            "material_shortages_count": 2,
-            "shortages_target": "Target: 0 Restricted SKUs (100% Line Fill)",
-            "shortages_status": "[Critical] 2 Constrained Materials: AISI 4140 & ST-88 Studs",
-            "shortages_color": "#DC2626",
-            "defect_rate": "4.12%",
-            "defect_target": "Target: ≤ 1.50% (Six Sigma Standard)",
-            "defect_status": "[Critical] +2.62% Above Allowed Defect Tolerance",
-            "defect_color": "#DC2626",
-            "oee_efficiency": "78.4%",
-            "oee_target": "Target: ≥ 85.0% (World-Class OEE Benchmark)",
-            "oee_status": "[Elevated] -6.6% Below Operating Target",
-            "oee_color": "#D97706",
-            "overall_status": "High Risk / Bottlenecked",
-            "status_badge": "status-badge-red",
-            "issues": [
-                {
-                    "type": "Machine Breakdown",
-                    "title": "Station ST-20 Fastener Spindle Bearing Seizure & Thermal Spike",
-                    "severity": "[Critical] Critical",
-                    "root_cause": "Spindle continuous run-time exceeded 18 hours without lubrication purge; vibration chattered to 2.85g under stiff material load.",
-                    "resolve_action": "Halt Station ST-20 for a 25-minute emergency maintenance window; flush lubricant, swap cartridge bearing, and replace worn tool bit.",
-                    "prevent_action": "Implement automated vibration threshold interlock at 2.5g and schedule dynamic PM cycles every 120 operating hours."
-                },
-                {
-                    "type": "Raw Material Shortage",
-                    "title": "AISI 4140 Alloy Bar Stock Depleted Below Safety Threshold",
-                    "severity": "[Elevated] High",
-                    "root_cause": "Vendor B shipment delayed by 10 days due to mill heat-treat quenching furnace backlog.",
-                    "resolve_action": "Transfer 350 emergency units from Nagoya central buffer; prioritize high-margin work orders.",
-                    "prevent_action": "Enforce 7-day safety stock buffer and trigger automated PO release when warehouse stock hits 15,850 kg."
-                },
-                {
-                    "type": "High Material Wastage",
-                    "title": "142 Scrap Parts Generated per Shift on Fastening Operations",
-                    "severity": "[Critical] Critical",
-                    "root_cause": "Metal hardness from Vendor B exceeds 216 HV, causing screwdriver stalls and stripped heads before reaching full seating torque.",
-                    "resolve_action": "Deploy adaptive machine recipe compensation (+0.45 Nm torque offset, +12° angle window) to salvage current stock without stalling.",
-                    "prevent_action": "Enforce incoming receiving inspection Upper Spec Limit (USL) at 216.0 HV with automated CMM test gate."
-                },
-                {
-                    "type": "Quality Problems",
-                    "title": "Dimensional Drift and Surface Scuff Rate at 3.9%",
-                    "severity": " Medium",
-                    "root_cause": "Tool bit wear index reached 78% on cutting station, causing micro-chatter during fastener seating.",
-                    "resolve_action": "Index cutter inserts; increase coolant mist pressure by +10 psi to dissipate frictional heat.",
-                    "prevent_action": "Program automatic tool wear tracking that flags cutter replacement at 70% wear life."
-                }
-            ]
-        },
-        "UNIT_2": {
-            "name": "[Tier 3] Factory Unit 2  -  Stuttgart Powertrain Plant (Machining & Tooling)",
-            "location": "Stuttgart, Germany",
-            "focus": "Precision CNC Milling, Honing & Hydraulic Components",
-            "total_machines": 34,
-            "active_machines": 32,
-            "avail_target": "100% Operational Readiness",
-            "avail_status": "2 machines offline for scheduled maintenance (94.1% availability)",
-            "avail_color": "#059669",
-            "downtime_hours": 2.1,
-            "downtime_pct": "2.9%",
-            "downtime_target": "Target: < 1.5h per 8h shift (Max 2.0% loss)",
-            "downtime_status": "[Elevated] +0.6h Over Allowed Ceiling",
-            "downtime_color": "#D97706",
-            "mfg_delays_hrs": 1.4,
-            "delays_target": "Target: 0.0h (Zero-Delay On-Time SLA)",
-            "delays_status": "[Elevated] Minor 1.4h Queue Backlog",
-            "delays_color": "#D97706",
-            "material_shortages_count": 1,
-            "shortages_target": "Target: 0 Restricted SKUs (100% Line Fill)",
-            "shortages_status": "[Elevated] 1 Constrained: Ni-Cr Sintered Bushings",
-            "shortages_color": "#D97706",
-            "defect_rate": "1.85%",
-            "defect_target": "Target: ≤ 1.50% (Six Sigma Standard)",
-            "defect_status": "[Elevated] +0.35% Above Allowed Six Sigma Standard",
-            "defect_color": "#D97706",
-            "oee_efficiency": "88.6%",
-            "oee_target": "Target: ≥ 85.0% (World-Class OEE Benchmark)",
-            "oee_status": "[Optimal] +3.6% Exceeds World-Class Benchmark",
-            "oee_color": "#059669",
-            "overall_status": "Controlled / Elevated",
-            "status_badge": "status-badge-orange",
-            "issues": [
-                {
-                    "type": "Machine Breakdown",
-                    "title": "CNC Mill #04 Hydraulic Pressure Fluctuation (95 psi vs 115 psi)",
-                    "severity": "[Elevated] High",
-                    "root_cause": "Hydraulic proportional valve filter clogged with micro-particulates and seal micro-leakage.",
-                    "resolve_action": "Replace valve filter element and bleed hydraulic accumulator during scheduled shift change.",
-                    "prevent_action": "Install differential pressure sensor across filter housing for real-time predictive clogging alerts."
-                },
-                {
-                    "type": "Raw Material Shortage",
-                    "title": "Nickel-Chromium Bushing Stock Lead Time Extended to 22 Days",
-                    "severity": " Medium",
-                    "root_cause": "Sintering vacuum furnace batch bottleneck at Vendor C plant.",
-                    "resolve_action": "Reallocate 500 bushings from reserve batch; expedite air freight shipment.",
-                    "prevent_action": "Establish local consignment buffer of 1,000 units at regional freight hub."
-                },
-                {
-                    "type": "High Material Wastage",
-                    "title": "Swarf Chip Accumulation Causing Valve Face Scoring (18 scrapped parts)",
-                    "severity": " Medium",
-                    "root_cause": "Chip evacuation nozzle pressure dropped to 3.8 bar.",
-                    "resolve_action": "Clear swarf flutes and boost coolant flush pump pressure to 6.5 bar.",
-                    "prevent_action": "Program automated high-pressure pulse flush cycle every 50 machining cycles."
-                },
-                {
-                    "type": "Quality Problems",
-                    "title": "Thread Pitch Micro-Wear on Tapping Spindle",
-                    "severity": " Medium",
-                    "root_cause": "Tap tool life reached 72% cycle limit against high-alloy valve blocks.",
-                    "resolve_action": "Swap tapping tool insert with calibrated TiN-coated bit.",
-                    "prevent_action": "Set tap retirement threshold at 65% life."
-                }
-            ]
-        },
-        "UNIT_3": {
-            "name": "[Tier 3] Factory Unit 3  -  Nagoya Advanced Chassis Facility (Forging & Heat Treatment)",
-            "location": "Nagoya, Japan",
-            "focus": "Heavy Forging, Heat-Treatment & Structural Chassis Hubs",
-            "total_machines": 22,
-            "active_machines": 20,
-            "avail_target": "100% Operational Readiness",
-            "avail_status": "2 heavy presses offline for quench recalibration (90.9% availability)",
-            "avail_color": "#D97706",
-            "downtime_hours": 3.4,
-            "downtime_pct": "4.7%",
-            "downtime_target": "Target: < 1.5h per 8h shift (Max 2.0% loss)",
-            "downtime_status": "[Critical] +1.9h Over Allowed Ceiling (4.7% loss vs 2.0% allowed)",
-            "downtime_color": "#DC2626",
-            "mfg_delays_hrs": 2.0,
-            "delays_target": "Target: 0.0h (Zero-Delay On-Time SLA)",
-            "delays_status": "[Elevated] Line Backlog: 2.0h Behind Scheduled Dispatch",
-            "delays_color": "#D97706",
-            "material_shortages_count": 0,
-            "shortages_target": "Target: 0 Restricted SKUs (100% Line Fill)",
-            "shortages_status": "[Optimal] 100% BOM In Stock & Fully Compliant (Zero Shortages)",
-            "shortages_color": "#059669",
-            "defect_rate": "2.45%",
-            "defect_target": "Target: ≤ 1.50% (Six Sigma Standard)",
-            "defect_status": "[Elevated] +0.95% Above Allowed Six Sigma Standard",
-            "defect_color": "#D97706",
-            "oee_efficiency": "84.2%",
-            "oee_target": "Target: ≥ 85.0% (World-Class OEE Benchmark)",
-            "oee_status": "[Elevated] -0.8% to World-Class Benchmark",
-            "oee_color": "#D97706",
-            "overall_status": "Controlled",
-            "status_badge": "status-badge-blue",
-            "issues": [
-                {
-                    "type": "Machine Breakdown",
-                    "title": "Induction Quench Coil Temperature Sensor Drift (+12°C offset)",
-                    "severity": "[Elevated] High",
-                    "root_cause": "Thermocouple calibration degradation from extreme thermal cycling.",
-                    "resolve_action": "Re-zero optical pyrometer and replace thermocouple probe #2.",
-                    "prevent_action": "Bi-weekly dual-pyrometer cross-validation audit."
-                },
-                {
-                    "type": "High Material Wastage",
-                    "title": "Scale Decarburization on Billet Ends (35 kg scrap)",
-                    "severity": " Medium",
-                    "root_cause": "Atmosphere purge nitrogen gas flow reduced by 15% due to regulator freeze.",
-                    "resolve_action": "Increase nitrogen blanket purge rate to 40 SCFH; thaw heater jacket.",
-                    "prevent_action": "Install continuous oxygen sensor in preheat tunnel with automated gas regulation."
-                },
-                {
-                    "type": "Quality Problems",
-                    "title": "Hardness Variance Between Core and Skin (Δ14 HV)",
-                    "severity": "[Elevated] High",
-                    "root_cause": "Quench spray ring nozzles partially calcified, causing uneven cooling.",
-                    "resolve_action": "Acid wash quench nozzles and inspect spray coverage cone.",
-                    "prevent_action": "Add water de-ionizer to quench water recirculation loop."
-                }
-            ]
-        },
-        "UNIT_4": {
-            "name": "[Tier 3] Factory Unit 4  -  Austin Gigafactory (Final Integration & Quality Gate)",
-            "location": "Austin, TX",
-            "focus": "Robotic Enclosure Assembly, Battery & Final Quality Gates",
-            "total_machines": 42,
-            "active_machines": 41,
-            "avail_target": "100% Operational Readiness",
-            "avail_status": "1 robotic cell offline for tool change (97.6% availability)",
-            "avail_color": "#059669",
-            "downtime_hours": 1.5,
-            "downtime_pct": "2.1%",
-            "downtime_target": "Target: < 1.5h per 8h shift (Max 2.0% loss)",
-            "downtime_status": "[Optimal] Met Downtime Target (≤ 1.5h)",
-            "downtime_color": "#059669",
-            "mfg_delays_hrs": 0.9,
-            "delays_target": "Target: 0.0h (Zero-Delay On-Time SLA)",
-            "delays_status": "[Optimal] Controlled (Near Zero Delay Backlog)",
-            "delays_color": "#059669",
-            "material_shortages_count": 1,
-            "shortages_target": "Target: 0 Restricted SKUs (100% Line Fill)",
-            "shortages_status": " Cap screws buffer approaching 2-shift minimum",
-            "shortages_color": "#D97706",
-            "defect_rate": "1.20%",
-            "defect_target": "Target: ≤ 1.50% (Six Sigma Standard)",
-            "defect_status": "[Optimal] Within Six Sigma Tolerance (< 1.50%)",
-            "defect_color": "#059669",
-            "oee_efficiency": "92.4%",
-            "oee_target": "Target: ≥ 85.0% (World-Class OEE Benchmark)",
-            "oee_status": "[Optimal] +7.4% Outstanding World-Class Leader",
-            "oee_color": "#059669",
-            "overall_status": "Benchmark Leader",
-            "status_badge": "status-badge-green",
-            "issues": [
-                {
-                    "type": "Machine Breakdown",
-                    "title": "Robotic Fastener Vision Camera Lens Coolant Mist Blur on Cell R-08",
-                    "severity": " Medium",
-                    "root_cause": "Aerosol coolant vapor deposition on camera optical shield.",
-                    "resolve_action": "Wipe camera shield and activate pneumatic air-knife curtain.",
-                    "prevent_action": "Install continuous positive-pressure air purge around optical sensors."
-                },
-                {
-                    "type": "Raw Material Shortage",
-                    "title": "Socket Head Cap Screws Buffer Approaching 2-Shift Minimum",
-                    "severity": " Medium",
-                    "root_cause": "Upstream Detroit plant delayed shipment of sub-assembly batch.",
-                    "resolve_action": "Direct-ship 5,000 screws via hot-shot freight from supplier warehouse.",
-                    "prevent_action": "Enable inter-plant ERP auto-requisitioning when stock hits 4-shift mark."
-                },
-                {
-                    "type": "Quality Problems",
-                    "title": "Vision Gate False Reject Rate Elevated at 1.8%",
-                    "severity": "[Optimal] Low",
-                    "root_cause": "Ambient lighting shift during sunset hours through facility skylights.",
-                    "resolve_action": "Enclose vision inspection hood with standardized LED backlighting.",
-                    "prevent_action": "Multi-spectral polarized illumination to eliminate specular glare."
-                }
-            ]
-        }
-    }
-
-    # Production Lines & Orders Master
-    prod_orders = [
-        {
-            "order_id": "PO-9802",
-            "line_id": "Line L1: Powertrain Fastening Cell",
-            "product_name": "M10-Flange Shaft Assembly (SKU: PWT-4402)",
-            "category": "Powertrain Fastening",
-            "mfg_unit": "Factory Unit 1 (Detroit)",
-            "planned_qty": 2500,
-            "actual_qty": 1890,
-            "planned_completion": "14:00 (Shift 1)",
-            "actual_completion": "18:30 (Shift 1)",
-            "delay_hrs": 4.5,
-            "status": "Severely Delayed",
-            "status_badge": "status-badge-red",
-            "rejection_rate": "6.2% (124 rejected parts)",
-            "raw_mat_status": "Critical Shortage (AISI 4140 Stock < 1.8 shifts)",
-            "bottlenecks": "Station ST-20 Fastening Cell (cycle time 48.2s vs target 32.0s due to stall retries)",
-            "issues": [
-                "Delayed Order (+4.5 hours behind schedule)",
-                "Low Production Output (75.6% attainment)",
-                "Severe Line Bottleneck at Station ST-20",
-                "High Rejection Rate (6.2% scrap from stripped heads)",
-                "Insufficient Raw Material Stock"
-            ],
-            "recommendations": {
-                "prioritizing_urgent_orders": "Mark PO-9802 as Priority P1 rush batch to meet OEM customer shipping window; reschedule non-urgent PO-9807 to night shift.",
-                "reallocating_capacity": "Route 35% of fastener sub-assemblies to Line L2 auxiliary cell to recover 3.5 hours of backlog.",
-                "resolving_bottlenecks": "Deploy adaptive torque recipe offset (-0.90 Nm, +92° angle window) and swap worn ST-20 tool bit to bring cycle time from 48s back to 32s.",
-                "replenishing_materials": "Execute emergency stock transfer of 350 kg 4140 steel from Nagoya warehouse; expedite Vendor B delivery."
-            }
-        },
-        {
-            "order_id": "PO-9801",
-            "line_id": "Line L1: Powertrain Fastening Cell",
-            "product_name": "Heavy-Duty Spline Shaft Assembly (SKU: PWT-5501)",
-            "category": "Powertrain Fastening",
-            "mfg_unit": "Factory Unit 1 (Detroit)",
-            "planned_qty": 3000,
-            "actual_qty": 2820,
-            "planned_completion": "14:00 (Shift 1)",
-            "actual_completion": "14:45 (Shift 1)",
-            "delay_hrs": 0.75,
-            "status": "On Schedule / Minor Delay",
-            "status_badge": "status-badge-green",
-            "rejection_rate": "1.8% (54 rejected parts)",
-            "raw_mat_status": "Adequate (4.5 days buffer)",
-            "bottlenecks": "Station ST-30 torque verification queue (minor)",
-            "issues": [
-                "Minor queue delay (+45 min)",
-                "High production output (94.0% attainment)"
-            ],
-            "recommendations": {
-                "prioritizing_urgent_orders": "Maintain current production cadence; ready batch for heat treatment queue.",
-                "reallocating_capacity": "No capacity reallocation needed.",
-                "resolving_bottlenecks": "Perform minor tool cleaning on ST-30 during shift handover.",
-                "replenishing_materials": "Stock is adequate. Reorder trigger set at 15,850 kg."
-            }
-        },
-        {
-            "order_id": "PO-9803",
-            "line_id": "Line L2: Chassis Structural Riveting",
-            "product_name": "High-Tensile Stud Hub Mount (SKU: CHS-8810)",
-            "category": "Chassis Structural",
-            "mfg_unit": "Factory Unit 1 (Detroit)",
-            "planned_qty": 1800,
-            "actual_qty": 1420,
-            "planned_completion": "15:30 (Shift 1)",
-            "actual_completion": "17:45 (Shift 1)",
-            "delay_hrs": 2.25,
-            "status": "Delayed with Bottleneck",
-            "status_badge": "status-badge-orange",
-            "rejection_rate": "4.1% (61 rejected parts)",
-            "raw_mat_status": "Low Buffer (ST-88 Studs down to 2.8 days)",
-            "bottlenecks": "Riveter anvil feed slide friction and thread burr stalls",
-            "issues": [
-                "Order Delayed (+2.25 hours)",
-                "Output Attainment 78.9%",
-                "Riveter feed chute jam from stud burrs",
-                "Raw material approaching safety stock limit"
-            ],
-            "recommendations": {
-                "prioritizing_urgent_orders": "Keep batch moving; assign secondary operator to clear feed track jams.",
-                "reallocating_capacity": "Line L2 running at maximum single-riveter capacity.",
-                "resolving_bottlenecks": "Clear anvil guide tracks and apply synthetic PTFE dry lube; instruct vendor to eliminate deburring burrs.",
-                "replenishing_materials": "Release PO for 8,000 ST-88 units immediately at ROP trigger."
-            }
-        },
-        {
-            "order_id": "PO-9804",
-            "line_id": "Line L2: Chassis Structural Riveting",
-            "product_name": "Titanium Support Bracket Sub-Assembly (SKU: CHS-9920)",
-            "category": "Chassis Structural",
-            "mfg_unit": "Factory Unit 1 (Detroit)",
-            "planned_qty": 1200,
-            "actual_qty": 1180,
-            "planned_completion": "13:00 (Shift 1)",
-            "actual_completion": "13:10 (Shift 1)",
-            "delay_hrs": 0.15,
-            "status": "On Schedule",
-            "status_badge": "status-badge-green",
-            "rejection_rate": "0.9% (11 rejected parts)",
-            "raw_mat_status": "Healthy (Titanium stock > 19 days)",
-            "bottlenecks": "None (Smooth automated riveting)",
-            "issues": [
-                "Optimal performance (98.3% attainment)"
-            ],
-            "recommendations": {
-                "prioritizing_urgent_orders": "Batch completed on schedule; stage for packaging.",
-                "reallocating_capacity": "Allow Line L2 operators to assist with clearing PO-9803 backlog.",
-                "resolving_bottlenecks": "None.",
-                "replenishing_materials": "Hold PO release for 12 days to burn excess stock."
-            }
-        },
-        {
-            "order_id": "PO-9805",
-            "line_id": "Line L3: Hydraulic Valve Assembly",
-            "product_name": "Precision Pressure Regulator Block (SKU: HYD-3301)",
-            "category": "Hydraulic Components",
-            "mfg_unit": "Factory Unit 2 (Stuttgart)",
-            "planned_qty": 2000,
-            "actual_qty": 1510,
-            "planned_completion": "16:00 (Shift 1)",
-            "actual_completion": "19:15 (Shift 1)",
-            "delay_hrs": 3.25,
-            "status": "Delayed with Bottleneck",
-            "status_badge": "status-badge-orange",
-            "rejection_rate": "5.4% (86 rejected parts)",
-            "raw_mat_status": "Elevated Hardness Drift (>220 HV on valve body)",
-            "bottlenecks": "Valve spool bore honing station (thermal taper drift)",
-            "issues": [
-                "Order Delayed (+3.25 hours)",
-                "Low output (75.5% attainment)",
-                "Bore taper rejects due to mill hydraulic pressure drop (95 psi)"
-            ],
-            "recommendations": {
-                "prioritizing_urgent_orders": "Prioritize OEM tier-1 orders; defer internal stock replenishments.",
-                "reallocating_capacity": "Split final pressure decay testing across 2 test benches.",
-                "resolving_bottlenecks": "Replace hydraulic filter on CNC Mill #04 to restore 115 psi clamp; slow hone stroke speed by -8%.",
-                "replenishing_materials": "Expedite shipment of 500 normalized Ni-Cr bushings from reserve lot."
-            }
-        },
-        {
-            "order_id": "PO-9806",
-            "line_id": "Line L4: Electronic Actuator Enclosure",
-            "product_name": "Motor Housing Sub-Assembly (SKU: ACT-2204)",
-            "category": "Actuator Enclosures",
-            "mfg_unit": "Factory Unit 4 (Austin)",
-            "planned_qty": 4000,
-            "actual_qty": 3850,
-            "planned_completion": "17:00 (Shift 1)",
-            "actual_completion": "17:20 (Shift 1)",
-            "delay_hrs": 0.33,
-            "status": "On Schedule",
-            "status_badge": "status-badge-green",
-            "rejection_rate": "1.4% (55 rejected parts)",
-            "raw_mat_status": "Adequate (3.8 days)",
-            "bottlenecks": "Seal dispensing nozzle purge (minor)",
-            "issues": [
-                "High output (96.2% attainment)"
-            ],
-            "recommendations": {
-                "prioritizing_urgent_orders": "Maintain standard flow.",
-                "reallocating_capacity": "Keep dedicated robotic cell operating continuously.",
-                "resolving_bottlenecks": "Pre-stage adhesive cartridges for shift 2.",
-                "replenishing_materials": "Trigger auto-requisitioning for socket head cap screws."
-            }
-        },
-        {
-            "order_id": "PO-9807",
-            "line_id": "Line L4: Electronic Actuator Enclosure",
-            "product_name": "Sensor Mounting Bracket (SKU: ACT-1102)",
-            "category": "Actuator Enclosures",
-            "mfg_unit": "Factory Unit 4 (Austin)",
-            "planned_qty": 2200,
-            "actual_qty": 1650,
-            "planned_completion": "15:00 (Shift 1)",
-            "actual_completion": "17:30 (Shift 1)",
-            "delay_hrs": 2.5,
-            "status": "Delayed (De-prioritized)",
-            "status_badge": "status-badge-orange",
-            "rejection_rate": "2.2% (37 rejected parts)",
-            "raw_mat_status": "Sufficient",
-            "bottlenecks": "Cell capacity temporarily diverted to rush order PO-9806",
-            "issues": [
-                "Delayed by 2.5 hours due to scheduled capacity pause"
-            ],
-            "recommendations": {
-                "prioritizing_urgent_orders": "Defer non-critical remaining 550 units to Shift 2 night run; keep Line L4 focused on PO-9806 delivery.",
-                "reallocating_capacity": "Resume production on Cell R-08 at 18:00.",
-                "resolving_bottlenecks": "Wipe vision camera lens to prevent false reject pauses.",
-                "replenishing_materials": "Material levels are sufficient."
-            }
-        },
-        {
-            "order_id": "PO-9808",
-            "line_id": "Line L3: Hydraulic Valve Assembly",
-            "product_name": "Spline Coupling Hub (SKU: HYD-7705)",
-            "category": "Hydraulic Components",
-            "mfg_unit": "Factory Unit 2 (Stuttgart)",
-            "planned_qty": 1500,
-            "actual_qty": 1470,
-            "planned_completion": "13:30 (Shift 1)",
-            "actual_completion": "13:40 (Shift 1)",
-            "delay_hrs": 0.17,
-            "status": "On Schedule",
-            "status_badge": "status-badge-green",
-            "rejection_rate": "1.1% (16 rejected parts)",
-            "raw_mat_status": "Adequate",
-            "bottlenecks": "None",
-            "issues": [
-                "Optimal throughput (98.0% attainment)"
-            ],
-            "recommendations": {
-                "prioritizing_urgent_orders": "Transfer completed batch to Detroit packaging hub.",
-                "reallocating_capacity": "Release honing fixture for PO-9805.",
-                "resolving_bottlenecks": "None.",
-                "replenishing_materials": "Standard replenishment."
-            }
-        }
-    ]
-
-    # Cross-Tier AI Cause-and-Effect Matrix (Connecting Manufacturing to Production)
-    ai_cross_tier_matrix = [
-        {
-            "priority": "P1 (Immediate Critical)",
-            "priority_badge": "status-badge-red",
-            "mfg_problem": "Station ST-20 Spindle Thermal Chatter & Tool Bit Wear (78%)",
-            "mfg_unit": "Factory Unit 1 (Detroit)  -  Cell Fastening",
-            "prod_effect": "Line L1 Order PO-9802 delayed by 4.5 hours; 124 rejected parts; cycle time spiked from 32s to 48.2s",
-            "prod_order": "PO-9802 (M10-Flange Shaft)",
-            "severity": "[Critical] Critical",
-            "root_cause": "Tool bit wear + stiff steel (>216 HV) causes screwdriver to slip and trip prematurely before 360° seating clamp.",
-            "resolve_action": "Halt line for 20 minutes; replace cutter bit; deploy adaptive torque offset (-0.90 Nm, +92° angle window).",
-            "prevent_action": "Automated vibration lockout at 2.5g; auto tool-life countdown flagged at 70% wear life."
-        },
-        {
-            "priority": "P1 (Immediate Critical)",
-            "priority_badge": "status-badge-red",
-            "mfg_problem": "AISI 4140 Stockout & Metallurgical Hardness Drift (>218 HV)",
-            "mfg_unit": "Factory Unit 1 (Detroit)  -  Raw Materials",
-            "prod_effect": "Line L1 Order PO-9802 stockout risk in 1.8 shifts; high scrap rate (6.2%)",
-            "prod_order": "PO-9802 (M10-Flange Shaft)",
-            "severity": "[Critical] Critical",
-            "root_cause": "Vendor B mill furnace backlog caused 10-day lead time slip + inconsistent quenching hardness.",
-            "resolve_action": "Transfer 350 kg emergency buffer from Nagoya; activate dual-sourcing to Vendor A; apply recipe offset.",
-            "prevent_action": "Tighten receiving USL to 216.0 HV; enforce 7-day safety stock buffer; demand $2.33M SCAR recovery."
-        },
-        {
-            "priority": "P2 (High Priority)",
-            "priority_badge": "status-badge-orange",
-            "mfg_problem": "Hydraulic Pressure Decay on CNC Mill #04 (95 psi vs 115 psi target)",
-            "mfg_unit": "Factory Unit 2 (Stuttgart)  -  Machining",
-            "prod_effect": "Line L3 Order PO-9805 delayed by 3.25 hours; bore taper dimensional drift (86 scrapped parts)",
-            "prod_order": "PO-9805 (Pressure Regulator)",
-            "severity": "[Elevated] High",
-            "root_cause": "Proportional valve filter clogged with micro-particulates and seal micro-leakage.",
-            "resolve_action": "Clean filter element and bleed accumulator during shift handover; reduce hone speed by -8%.",
-            "prevent_action": "Install continuous differential pressure sensor across filter housing for predictive maintenance alert."
-        },
-        {
-            "priority": "P3 (Medium Priority)",
-            "priority_badge": "status-badge-orange",
-            "mfg_problem": "Riveter Anvil Guide Track Friction & Thread Burr Stalls",
-            "mfg_unit": "Factory Unit 1 (Detroit)  -  Chassis Cell",
-            "prod_effect": "Line L2 Order PO-9803 delayed by 2.25 hours; stud stock approaching safety threshold (2.8 days)",
-            "prod_order": "PO-9803 (High-Tensile Stud Hub)",
-            "severity": "[Elevated] High",
-            "root_cause": "Supplier die wear generated micro-burrs on stud heads, jamming riveter feed chute.",
-            "resolve_action": "Apply PTFE dry lube to anvil guides; mandate vendor inspect burr height before shipment.",
-            "prevent_action": "Mandate die replacement schedule every 50,000 cycles with Vendor A."
-        },
-        {
-            "priority": "P4 (Scheduled Maintenance)",
-            "priority_badge": "status-badge-blue",
-            "mfg_problem": "Robotic Fastener Vision Optical Shield Coolant Mist Blur",
-            "mfg_unit": "Factory Unit 4 (Austin)  -  Final QC",
-            "prod_effect": "Line L4 Order PO-9807 delayed by 2.5 hours; vision gate false rejects elevated to 1.8%",
-            "prod_order": "PO-9807 (Sensor Bracket)",
-            "severity": " Medium",
-            "root_cause": "Aerosol coolant vapor deposition on camera optical shield without continuous positive purge.",
-            "resolve_action": "Wipe lens shield and activate positive-pressure air-knife curtain.",
-            "prevent_action": "Enclose optical inspection portal with multi-spectral polarized illumination."
-        }
-    ]
-
     return {
-        "material": mat_df,
-        "material_enriched": mat_enriched,
-        "supplier": supp_df,
-        "warranty": warr_enriched,
-        "sample_parts": sample_parts,
-        "supplier_products": supplier_products,
-        "raw_materials_inventory": raw_materials_inventory,
-        "mfg_units": mfg_units,
-        "prod_orders": prod_orders,
-        "ai_cross_tier_matrix": ai_cross_tier_matrix
+        "material": material,
+        "supplier_history": supplier_history,
+        "warranty": warranty,
+        "catalog": catalog,
     }
 
-models = get_ml_models()
-data = load_datasets()
 
-# -----------------------------------------------------------------------------
-# 4. DESIGN SYSTEM & CSS (SMARTNUTRI AI LIGHT THEME)
-# -----------------------------------------------------------------------------
-render_html("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+def _models():
+    try:
+        return load_dashboard_models()
+    except Exception as exc:
+        st.error(f"Could not load the inference models: {type(exc).__name__}: {exc}")
+        return None
 
-.stApp {
-    background-color: #F8FAFC;
-    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-    color: #1E293B;
-}
 
-/* Sidebar */
-section[data-testid="stSidebar"] {
-    background-color: #FFFFFF;
-    border-right: 1px solid #E2E8F0;
-    padding-top: 12px;
-}
+@st.cache_data(ttl=60)
+def _api_get(path: str):
+    response = requests.get(f"{API_BASE_URL}{path}", timeout=30)
+    response.raise_for_status()
+    return response.json()
 
-/* Hero Banner */
-.hero-banner {
-    background: #EBF5FF;
-    border: 1px solid #BFDBFE;
-    border-radius: 18px;
-    padding: 24px 30px;
-    margin-bottom: 20px;
-}
 
-.hero-pill {
-    background: #EA580C;
-    color: #FFFFFF;
-    display: inline-block;
-    padding: 4px 14px;
-    border-radius: 9999px;
-    font-size: 0.72rem;
-    font-weight: 800;
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
-    margin-bottom: 10px;
-}
+def _api_post(path: str, payload: dict):
+    response = requests.post(f"{API_BASE_URL}{path}", json=payload, timeout=60)
+    response.raise_for_status()
+    return response.json()
 
-.hero-title {
-    font-size: 2.1rem;
-    font-weight: 800;
-    color: #0F172A;
-    margin: 0 0 6px 0;
-    letter-spacing: -0.5px;
-}
 
-.hero-sub {
-    font-size: 0.95rem;
-    color: #475569;
-    font-weight: 500;
-    margin: 0;
-}
-
-/* White Metric Cards */
-.metric-card-white {
-    background: #FFFFFF;
-    border: 1px solid #E2E8F0;
-    border-radius: 14px;
-    padding: 16px 14px;
-    text-align: center;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.02);
-    height: 100%;
-}
-
-.metric-card-label {
-    font-size: 0.70rem;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: #64748B;
-    margin-bottom: 4px;
-}
-
-.metric-card-number {
-    font-size: 1.75rem;
-    font-weight: 800;
-    letter-spacing: -0.5px;
-    margin-bottom: 4px;
-}
-
-.metric-card-target {
-    font-size: 0.74rem;
-    font-weight: 700;
-    color: #1E3A8A;
-    background: #EFF6FF;
-    padding: 2px 6px;
-    border-radius: 4px;
-    display: inline-block;
-    margin-bottom: 4px;
-}
-
-.metric-card-delta {
-    font-size: 0.72rem;
-    font-weight: 600;
-    line-height: 1.3;
-}
-
-/* Smart Cards */
-.smart-card {
-    background: #FFFFFF;
-    border: 1px solid #E2E8F0;
-    border-radius: 16px;
-    padding: 22px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
-    margin-bottom: 18px;
-}
-
-.card-title {
-    font-size: 1.15rem;
-    font-weight: 800;
-    color: #0F172A;
-    margin: 0 0 12px 0;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-/* Badge Pills */
-.badge-pill-red {
-    background: #FEE2E2;
-    color: #991B1B;
-    border: 1px solid #FCA5A5;
-    padding: 4px 12px;
-    border-radius: 9999px;
-    font-size: 0.78rem;
-    font-weight: 700;
-    display: inline-block;
-}
-
-.badge-pill-orange {
-    background: #FFEDD5;
-    color: #9A3412;
-    border: 1px solid #FDBA74;
-    padding: 4px 12px;
-    border-radius: 9999px;
-    font-size: 0.78rem;
-    font-weight: 700;
-    display: inline-block;
-}
-
-.badge-pill-green {
-    background: #DCFCE7;
-    color: #166534;
-    border: 1px solid #86EFAC;
-    padding: 4px 12px;
-    border-radius: 9999px;
-    font-size: 0.78rem;
-    font-weight: 700;
-    display: inline-block;
-}
-
-.badge-pill-blue {
-    background: #DBEAFE;
-    color: #1E40AF;
-    border: 1px solid #93C5FD;
-    padding: 4px 12px;
-    border-radius: 9999px;
-    font-size: 0.78rem;
-    font-weight: 700;
-    display: inline-block;
-}
-
-/* Status Badges */
-.status-badge-red {
-    background: #FEF2F2;
-    color: #B91C1C;
-    border: 1px solid #FCA5A5;
-    padding: 3px 10px;
-    border-radius: 6px;
-    font-size: 0.75rem;
-    font-weight: 700;
-    display: inline-block;
-}
-
-.status-badge-orange {
-    background: #FFFBEB;
-    color: #B45309;
-    border: 1px solid #FDE68A;
-    padding: 3px 10px;
-    border-radius: 6px;
-    font-size: 0.75rem;
-    font-weight: 700;
-    display: inline-block;
-}
-
-.status-badge-green {
-    background: #ECFDF5;
-    color: #047857;
-    border: 1px solid #A7F3D0;
-    padding: 3px 10px;
-    border-radius: 6px;
-    font-size: 0.75rem;
-    font-weight: 700;
-    display: inline-block;
-}
-
-.status-badge-blue {
-    background: #EFF6FF;
-    color: #1D4ED8;
-    border: 1px solid #BFDBFE;
-    padding: 3px 10px;
-    border-radius: 6px;
-    font-size: 0.75rem;
-    font-weight: 700;
-    display: inline-block;
-}
-
-/* Callouts */
-.callout-blue {
-    background: #EFF6FF;
-    border-left: 4px solid #2563EB;
-    border-radius: 8px;
-    padding: 14px 18px;
-    font-size: 0.92rem;
-    color: #1E40AF;
-    margin-top: 10px;
-}
-
-.callout-red {
-    background: #FEF2F2;
-    border-left: 4px solid #DC2626;
-    border-radius: 8px;
-    padding: 14px 18px;
-    font-size: 0.92rem;
-    color: #991B1B;
-    margin-top: 10px;
-}
-
-.callout-green {
-    background: #ECFDF5;
-    border-left: 4px solid #059669;
-    border-radius: 8px;
-    padding: 14px 18px;
-    font-size: 0.92rem;
-    color: #065F46;
-    margin-top: 10px;
-}
-
-/* Issue Card Grid */
-.issue-card {
-    background: #FFFFFF;
-    border: 1px solid #E2E8F0;
-    border-radius: 12px;
-    padding: 16px;
-    margin-bottom: 12px;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.02);
-}
-</style>
-""")
-
-# -----------------------------------------------------------------------------
-# 5. MAIN HEADER HERO
-# -----------------------------------------------------------------------------
-render_html("""
-<div class="hero-banner">
-    <h1 class="hero-title">Factory Operations & Quality Executive Dashboard</h1>
-    <p class="hero-sub">AI-powered defect prevention, 199-batch raw material tracking, production line schedule alignment, and root cause mitigation across all manufacturing tiers.</p>
-</div>
-""")
-
-# -----------------------------------------------------------------------------
-# 7. TOP HORIZONTAL TABS (STRUCTURED & INTUITIVE FOR MANAGERS)
-# -----------------------------------------------------------------------------
-tab_supp, tab_mat, tab_mfg_unit, tab_prod_line = st.tabs([
-    "[Tier 1] 1. Supplier / Vendor Level",
-    "[Tier 2] 2. Raw Material & Inventory Level",
-    "[Tier 3] 3. Manufacturing Level (Factories & Units)",
-    "[Tier 4] 4. Production Level (Lines & Orders)"
-])
-
-# =============================================================================
-# TAB 1: SUPPLIER / VENDOR LEVEL ISSUES
-# =============================================================================
-with tab_supp:
-    # 1. INDIVIDUAL VENDOR SELECTION & LIVE PROFILE HEADER
-    col_sel, col_info = st.columns([1.5, 1.0])
-    with col_sel:
-        vendor_choice = st.selectbox(
-            "[Tier 1] Select Individual Supplier / Vendor to Analyze:",
-            [
-                "VENDOR A  -  Fastener Bar Stock & Threaded Hardware Co.",
-                "VENDOR B  -  Structural Cold Drawn & Steel Technologies",
-                "VENDOR C  -  High Strength Alloy & Precision Metallurgy"
-            ],
-            key="supp_choice"
-        )
-    supp_id = "VENDOR_A" if "VENDOR A" in vendor_choice else ("VENDOR_B" if "VENDOR B" in vendor_choice else "VENDOR_C")
-
-    # Data slice for selected supplier
-    warr_supp = data["warranty"][data["warranty"]["supplier_id"] == supp_id]
-    mat_supp = data["material"][data["material"]["supplier_id"] == supp_id]
-    hist_supp = data["supplier"][data["supplier"]["supplier_id"] == supp_id].sort_values("snapshot_date")
-    supp_prods = data["supplier_products"].get(supp_id, [])
-
-    # Machine Learning / Analytical Engine: SupplierQualityTrendAnalyzer & SCARGenerator
-    trend_analyzer = models.get("trend_analyzer") if models else None
-    supp_prof = {}
-    if trend_analyzer:
+def _api_error_message(exc: Exception) -> str:
+    if isinstance(exc, requests.HTTPError) and exc.response is not None:
         try:
-            trend_profiles = trend_analyzer.analyze_trends()
-            supp_prof = trend_profiles.get(supp_id, {})
-        except Exception:
-            supp_prof = {}
+            detail = exc.response.json().get("detail", exc.response.text)
+        except ValueError:
+            detail = exc.response.text
+        return f"API request failed ({exc.response.status_code}): {detail}"
+    return f"Could not reach the Manufacturing API at {API_BASE_URL}: {exc}"
 
-    claim_count = supp_prof.get("total_warranty_claims", len(warr_supp))
-    claim_cost = supp_prof.get("total_warranty_cost_usd", float(warr_supp["claim_cost_usd"].sum()))
-    chargebacks = supp_prof.get("total_chargebacks_usd", float(mat_supp["chargeback_amount_usd"].sum()))
-    scrap_cost = supp_prof.get("total_internal_scrap", float(mat_supp["scrap_count"].sum())) * 55.0
-    total_claim = scrap_cost + chargebacks + claim_cost
 
-    recent_rate = supp_prof.get("current_defect_rate_pct", hist_supp["historical_defect_rate_pct"].iloc[-1] if not hist_supp.empty else 0.0)
-    recent_capa = int(hist_supp["capa_recurrence_count"].iloc[-1]) if not hist_supp.empty else 0
-    capa_events = supp_prof.get("total_capa_recurrence_count", int(hist_supp["capa_recurrence_count"].sum()) if not hist_supp.empty else 0)
-    top_modes = supp_prof.get("top_recurring_failure_modes", {})
-    top_mode = max(top_modes, key=top_modes.get) if top_modes else (hist_supp["recurring_failure_mode"].mode()[0] if not hist_supp.empty else "INCOMPLETE_FASTENING")
-
-    delayed_count = len([p for p in supp_prods if p.get("is_delayed", False)])
-    tolerance_leak = 18 if supp_id == "VENDOR_B" else 0
-
-    # Balanced Enterprise Vendor Risk Score (0 - 100)
-    supp_risk = int(min(100, (recent_rate / 15.0) * 35 + (recent_capa / 10.0) * 20 + (delayed_count / len(supp_prods)) * 25 + (claim_cost / 800000.0) * 10 + tolerance_leak))
-    if supp_risk > 70:
-        risk_badge = f'<span class="badge-pill-red">[Critical] Risk Score: {supp_risk}/100 (Critical Chronic Vendor Risk)</span>'
-        callout_type = "callout-red"
-    elif supp_risk > 35:
-        risk_badge = f'<span class="badge-pill-orange">[Elevated] Risk Score: {supp_risk}/100 (Controlled / Moderate Watchlist)</span>'
-        callout_type = "callout-blue"
-    else:
-        risk_badge = f'<span class="badge-pill-green">[Optimal] Risk Score: {supp_risk}/100 (Controlled Benchmark Vendor - Low Risk)</span>'
-        callout_type = "callout-green"
-
-    with col_info:
-        render_html(f"""
-        <div style="display: flex; justify-content: flex-end; align-items: center; height: 100%;">
-            {risk_badge}
-        </div>
-        """)
-
-    # 4 Clean Metric Cards
-    k1, k2, k3, k4 = st.columns(4)
-    with k1:
-        render_html(f'<div class="metric-card-white"><div class="metric-card-label">CURRENT DEFECT RATE</div><div class="metric-card-number" style="color: {"#DC2626" if recent_rate > 8 else ("#D97706" if recent_rate > 3 else "#059669")};">{recent_rate:.2f}%</div><div class="metric-card-target">Target: < 1.50%</div><div class="metric-card-delta" style="color: {"#DC2626" if recent_rate > 8 else "#64748B"};">{"+" + f"{recent_rate - 1.5:.2f}%" if recent_rate > 1.5 else "Nominal"} Six Sigma envelope</div></div>')
-    with k2:
-        render_html(f'<div class="metric-card-white"><div class="metric-card-label">FIELD WARRANTY CLAIMS</div><div class="metric-card-number" style="color: {"#DC2626" if claim_count > 400 else ("#D97706" if claim_count > 300 else "#2563EB")};">{claim_count} parts</div><div class="metric-card-target">Target: 0 Parts</div><div class="metric-card-delta" style="color: #64748B;">Monitored field returns</div></div>')
-    with k3:
-        render_html(f'<div class="metric-card-white"><div class="metric-card-label">WARRANTY COST LEAKED</div><div class="metric-card-number" style="color: #2563EB;">${claim_cost:,.0f}</div><div class="metric-card-target">Target: $0.00</div><div class="metric-card-delta" style="color: #2563EB;">Eligible for chargeback</div></div>')
-    with k4:
-        render_html(f'<div class="metric-card-white"><div class="metric-card-label">TOTAL FINANCIAL DEMAND</div><div class="metric-card-number" style="color: #059669;">${total_claim:,.0f}</div><div class="metric-card-target">8D SCAR Claim</div><div class="metric-card-delta" style="color: #059669;">Scrap + Chargebacks + Warranty</div></div>')
-
-    st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
-
-    # -------------------------------------------------------------------------
-    # 2. FEATURE A: WHAT ALL PRODUCTS THAT VENDOR WILL SUPPLY
-    # -------------------------------------------------------------------------
-    render_html(f"""
-    <div class="smart-card">
-        <div class="card-title" style="display: flex; align-items: center; gap: 8px;">
-            <span>[Catalog]</span> 1. What All Products {supp_id} Supplies & Delivery Turnaround
-        </div>
-        <p style="font-size: 0.90rem; color: #64748B; margin-bottom: 12px;">
-            Complete catalog of parts and materials procured from <strong>{supp_id}</strong>, including target lead times, actual turnaround times, delivery variance, quality scores, and health risk tiers.
-        </p>
-    </div>
-    """)
-
-    prod_rows = []
-    for p in supp_prods:
-        delay_val = p.get('delay_days', 0)
-        delay_str = f"+{delay_val} days delay" if delay_val >= 3 else ("Normal Buffer (+1-2d)" if delay_val > 0 else "0d (On Schedule)")
-        prod_rows.append({
-            "SKU": p["sku"],
-            "Product / Material Name": p["name"],
-            "Category": p["category"],
-            "Monthly Demand": p.get("monthly_vol", "N/A"),
-            "Target Lead Time": f"{p['target_lead_days']} days",
-            "Actual Turnaround": f"{p['actual_lead_days']} days",
-            "Delivery Variance": delay_str,
-            "Quality Conformance": p["quality_score"],
-            "Risk & Health Tier": p.get("risk_tier", "[Optimal] Low Risk (Optimal)"),
-            "Status": p["status"]
-        })
-    df_prods = pd.DataFrame(prod_rows)
-    st.dataframe(df_prods, use_container_width=True, height=190)
-
-    # Visual Comparison Bar Chart for Lead Times with color-coding
-    chart_df = pd.DataFrame([
-        {
-            "Product": p["name"][:25] + "...",
-            "Target Lead Time (Days)": p["target_lead_days"],
-            "Actual Turnaround (Days)": p["actual_lead_days"],
-            "Color": "#DC2626" if p.get("is_delayed", False) else ("#D97706" if p.get("delay_days", 0) >= 4 else "#10B981")
-        } for p in supp_prods
-    ])
-
-    fig_lead = go.Figure()
-    fig_lead.add_trace(go.Bar(
-        x=chart_df["Product"],
-        y=chart_df["Target Lead Time (Days)"],
-        name="Target Lead Time",
-        marker_color="#94A3B8"
-    ))
-    fig_lead.add_trace(go.Bar(
-        x=chart_df["Product"],
-        y=chart_df["Actual Turnaround (Days)"],
-        name="Actual Turnaround (Green=On Schedule, Red=Critical Delay)",
-        marker_color=chart_df["Color"]
-    ))
-    fig_lead.update_layout(
-        barmode='group',
-        height=260,
-        margin=dict(l=10, r=10, t=25, b=10),
-        yaxis=dict(title="Days"),
-        xaxis=dict(title=""),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+def _batch_feature_frame(material: pd.DataFrame) -> pd.DataFrame:
+    frame = material.copy()
+    frame["hardness_margin_upper"] = frame["upper_spec_limit"] - frame["material_hardness_hv"]
+    frame["hardness_margin_lower"] = frame["material_hardness_hv"] - frame["lower_spec_limit"]
+    frame["hardness_nominal_dev"] = np.abs(
+        frame["material_hardness_hv"]
+        - (frame["upper_spec_limit"] + frame["lower_spec_limit"]) / 2.0
     )
-    st.plotly_chart(fig_lead, use_container_width=True)
-
-    # -------------------------------------------------------------------------
-    # 3. FEATURE B: AMONG THEM WHICH PRODUCT TAKING MORE TIME & MORE DELAY
-    # -------------------------------------------------------------------------
-    critical_delayed = [p for p in supp_prods if p.get("is_delayed", False) or p.get("delay_days", 0) >= 6]
-    moderate_delayed = [p for p in supp_prods if p not in critical_delayed and p.get("delay_days", 0) >= 3]
-    healthy_prods = [p for p in supp_prods if p not in critical_delayed and p not in moderate_delayed]
-
-    render_html(f"""
-    <div class="smart-card" style="border-left: 6px solid {"#DC2626" if critical_delayed else "#10B981"}; margin-top: 18px;">
-        <div class="card-title" style="display: flex; align-items: center; gap: 8px; color: {"#991B1B" if critical_delayed else "#065F46"};">
-            <span>{"[Bottleneck Alert]" if critical_delayed else "[Controlled]"}</span> 2. Delay & Bottleneck Analysis: Which Products Are Taking More Time?
-        </div>
-        <p style="font-size: 0.90rem; color: #64748B; margin-bottom: 12px;">
-            Accurately distinguishing healthy, on-schedule inventory from genuine mill bottlenecks and excessive supplier lead time delays.
-        </p>
-    </div>
-    """)
-
-    # High-Level Portfolio Health Summary Banner
-    render_html(f"""
-    <div style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; padding: 14px 18px; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
-        <div style="font-size: 0.95rem; font-weight: 700; color: #0F172A;">
-            Portfolio Health Breakdown: 
-            <span style="color: #059669; font-weight: 800;">{len(healthy_prods)} of {len(supp_prods)} Products Healthy & On Schedule ({int(len(healthy_prods)/len(supp_prods)*100)}%)</span>
-            {f' &nbsp;*&nbsp; <span style=\"color: #DC2626; font-weight: 800;\">{len(critical_delayed)} Delayed Bottleneck(s)</span>' if critical_delayed else ''}
-            {f' &nbsp;*&nbsp; <span style=\"color: #D97706; font-weight: 800;\">{len(moderate_delayed)} Moderate Watchlist</span>' if moderate_delayed else ''}
-        </div>
-        <div>
-            <span class="{'badge-pill-green' if len(critical_delayed) == 0 else ('badge-pill-orange' if len(critical_delayed) <= 1 else 'badge-pill-red')}">
-                {'[Optimal] High Operational Stability' if len(critical_delayed) == 0 else ('[Elevated] Contained Single-Component Delay' if len(critical_delayed) <= 1 else '[Critical] Severe Multi-Product Mill Bottlenecks')}
-            </span>
-        </div>
-    </div>
-    """)
-
-    if critical_delayed:
-        # Sort delayed items by delay_days descending
-        sorted_delayed = sorted(critical_delayed, key=lambda x: x.get('delay_days', 0), reverse=True)
-        worst_p = sorted_delayed[0]
-
-        # Highlight the single product taking the most time / delay
-        render_html(f"""
-        <div style="background: #FEF2F2; border: 2px solid #EF4444; border-radius: 14px; padding: 18px; margin-bottom: 16px;">
-            <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px;">
-                <div>
-                    <span style="background: #DC2626; color: #FFFFFF; font-size: 0.74rem; font-weight: 800; padding: 4px 10px; border-radius: 6px; text-transform: uppercase; letter-spacing: 0.5px;">
-                        [Warning] #1 HIGHEST DELAY BOTTLENECK PRODUCT FOR {supp_id}
-                    </span>
-                    <div style="font-size: 1.35rem; font-weight: 800; color: #991B1B; margin-top: 8px;">
-                        {worst_p['name']}
-                    </div>
-                    <div style="font-size: 0.88rem; color: #7F1D1D; margin-top: 3px;">
-                        SKU: <strong style="font-family: monospace;">{worst_p['sku']}</strong> &nbsp;|&nbsp; Category: <strong>{worst_p['category']}</strong> &nbsp;|&nbsp; Monthly Demand: <strong>{worst_p.get('monthly_vol', 'N/A')}</strong>
-                    </div>
-                </div>
-                <div style="text-align: right; background: #FFFFFF; border: 1px solid #FCA5A5; border-radius: 10px; padding: 10px 18px;">
-                    <div style="font-size: 0.75rem; font-weight: 800; color: #991B1B; text-transform: uppercase;">Excess Turnaround Delay</div>
-                    <div style="font-size: 1.85rem; font-weight: 900; color: #DC2626; line-height: 1.1;">+{worst_p['delay_days']} DAYS</div>
-                    <div style="font-size: 0.80rem; color: #7F1D1D; margin-top: 2px;">Takes <strong>{worst_p['actual_lead_days']}d</strong> (Target: {worst_p['target_lead_days']}d)</div>
-                </div>
-            </div>
-            <div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed #FCA5A5; font-size: 0.90rem; color: #450A0A; line-height: 1.6;">
-                <strong>Mill Process Bottleneck & Root Cause:</strong> {worst_p['root_cause']}
-            </div>
-        </div>
-        """)
-
-        # Grid of all delayed products for this vendor
-        st.markdown(f"<div style='font-size: 0.95rem; font-weight: 700; color: #0F172A; margin-bottom: 8px;'>Critical Delayed Components ({len(critical_delayed)} items):</div>", unsafe_allow_html=True)
-        cols_d = st.columns(len(critical_delayed))
-        for idx, dp in enumerate(critical_delayed):
-            with cols_d[idx]:
-                render_html(f"""
-                <div style="background: #FFFFFF; border: 1px solid #FCA5A5; border-top: 4px solid #DC2626; border-radius: 12px; padding: 14px; height: 100%; box-shadow: 0 2px 8px rgba(0,0,0,0.03);">
-                    <div style="font-weight: 800; font-size: 0.95rem; color: #991B1B;">{dp['name']}</div>
-                    <div style="font-size: 0.78rem; color: #7F1D1D; margin: 4px 0 8px 0;">SKU: {dp['sku']} | {dp['category']}</div>
-                    <div style="font-size: 0.88rem; color: #1E293B; line-height: 1.6;">
-                        * <strong>Actual Turnaround:</strong> <span style="color: #DC2626; font-weight: 700;">{dp['actual_lead_days']} days</span><br>
-                        * <strong>Target Lead Time:</strong> {dp['target_lead_days']} days<br>
-                        * <strong>Excess Delay:</strong> <span style="background: #FEE2E2; color: #B91C1C; padding: 2px 7px; border-radius: 4px; font-weight: 800;">+{dp['delay_days']} days</span><br>
-                        * <strong>Cause:</strong> {dp['root_cause']}
-                    </div>
-                </div>
-                """)
-
-        # Reassuring list of healthy products for this vendor
-        if healthy_prods:
-            healthy_items_html = " &nbsp;*&nbsp; ".join([f"<strong>{p['name']}</strong> ({p['sku']} * {p['actual_lead_days']}d * Conformance: {p['quality_score']})" for p in healthy_prods])
-            render_html(f"""
-            <div style="background: #F0FDF4; border: 1px solid #BBF7D0; border-radius: 10px; padding: 12px 16px; margin-top: 14px;">
-                <div style="font-size: 0.82rem; font-weight: 800; color: #15803D; text-transform: uppercase;">
-                    [Controlled] {len(healthy_prods)} Healthy Products Arriving On Schedule (Low Risk):
-                </div>
-                <div style="font-size: 0.88rem; color: #166534; margin-top: 4px; line-height: 1.6;">
-                    {healthy_items_html}
-                </div>
-            </div>
-            """)
-    else:
-        render_html(f"""
-        <div class="callout-green">
-            [Controlled] <strong>All {len(supp_prods)} products supplied by {supp_id} are arriving on schedule</strong> within established target tolerances with zero bottleneck delays.
-        </div>
-        """)
-
-    st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
-
-    # -------------------------------------------------------------------------
-    # 4. FEATURE C: RECOMMENDATIONS FOR THAT INDIVIDUAL PRODUCT
-    # -------------------------------------------------------------------------
-    render_html(f"""
-    <div class="smart-card" style="border-left: 6px solid #2563EB;">
-        <div class="card-title" style="display: flex; align-items: center; gap: 8px;">
-            <span>[AI Recommendations]</span> 3. Actionable AI Recommendations for Individual Products
-        </div>
-        <p style="font-size: 0.90rem; color: #64748B; margin-bottom: 12px;">
-            Select any individual product supplied by <strong>{supp_id}</strong> to review specific defect modes, physical symptoms, mill bottlenecks, and prescriptive AI recommendations.
-        </p>
-    </div>
-    """)
-
-    # Dropdown to select individual product with clear Risk & Status tags
-    prod_options = [
-        f"{p['sku']}  -  {p['name']} [{p.get('risk_tier', '[Optimal] Low Risk')}]"
-        for p in supp_prods
-    ]
-
-    # Pre-select highest delayed product by default if one exists, else index 0
-    default_p_idx = 0
-    if critical_delayed:
-        worst_sku = sorted(critical_delayed, key=lambda x: x.get('delay_days', 0), reverse=True)[0]['sku']
-        for idx, p in enumerate(supp_prods):
-            if p['sku'] == worst_sku:
-                default_p_idx = idx
-                break
-
-    col_p_sel, col_p_badge = st.columns([1.6, 1.0])
-    with col_p_sel:
-        selected_prod_label = st.selectbox(
-            f"Select Individual Product from {supp_id} for Specific AI Recommendations:",
-            prod_options,
-            index=default_p_idx,
-            key=f"prod_select_{supp_id}"
-        )
-
-    selected_p = next((p for p in supp_prods if f"{p['sku']}  -  {p['name']}" in selected_prod_label), supp_prods[0])
-    status_border_color = "#DC2626" if selected_p.get("is_delayed", False) else ("#D97706" if selected_p.get("delay_days", 0) >= 3 else "#059669")
-    delay_indicator = f"+{selected_p['delay_days']} days delay" if selected_p["delay_days"] >= 3 else ("Normal Buffer (+1-2d)" if selected_p["delay_days"] > 0 else "On Schedule (0d)")
-
-    with col_p_badge:
-        render_html(f"""
-        <div style="display: flex; justify-content: flex-end; align-items: center; height: 100%; padding-top: 14px;">
-            <span class="{selected_p['status_badge']}" style="font-size: 0.85rem; padding: 6px 14px; font-weight: 700;">
-                {selected_p['status']}
-            </span>
-        </div>
-        """)
-
-    # Detailed Explanation Card for Selected Product
-    rec_items = [r.strip() for r in selected_p['recs'].split(";") if r.strip()]
-    rec_bullets_html = "".join([f'<li style="margin-bottom: 6px;">{item}</li>' for item in rec_items])
-    quality_num = float(selected_p['quality_score'].replace('%', '').strip())
-    quality_color = "#059669" if quality_num >= 95 else ("#D97706" if quality_num >= 90 else "#DC2626")
-
-    render_html(f"""
-    <div class="issue-card" style="border-left: 6px solid {status_border_color}; background: #FFFFFF; border-radius: 14px; padding: 22px; box-shadow: 0 4px 14px rgba(0,0,0,0.03); margin-top: 10px; margin-bottom: 20px;">
-        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; border-bottom: 1px solid #F1F5F9; padding-bottom: 14px;">
-            <div>
-                <span style="font-size: 0.76rem; font-weight: 800; color: #2563EB; text-transform: uppercase; letter-spacing: 0.5px;">INDIVIDUAL PRODUCT DEEP-DIVE SPECIFICATION</span>
-                <div style="font-size: 1.35rem; font-weight: 800; color: #0F172A; margin: 3px 0;">{selected_p['name']}</div>
-                <div style="font-size: 0.88rem; color: #64748B;">
-                    <strong>SKU:</strong> <span style="font-family: monospace; font-weight: 700; color: #334155;">{selected_p['sku']}</span> &nbsp;*&nbsp; 
-                    <strong>Category:</strong> <span style="font-weight: 600; color: #334155;">{selected_p['category']}</span> &nbsp;*&nbsp; 
-                    <strong>Supplier:</strong> <span style="font-weight: 600; color: #334155;">{supp_id}</span>
-                </div>
-            </div>
-            <div style="text-align: right;">
-                <span style="font-size: 0.72rem; font-weight: 800; color: #64748B; text-transform: uppercase;">QUALITY CONFORMANCE</span>
-                <div style="font-size: 1.55rem; font-weight: 800; color: {quality_color};">
-                    {selected_p['quality_score']}
-                </div>
-            </div>
-        </div>
-
-        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px;">
-            <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 10px 14px; text-align: center;">
-                <div style="font-size: 0.70rem; font-weight: 700; color: #64748B; text-transform: uppercase;">Monthly Volume</div>
-                <div style="font-size: 1.1rem; font-weight: 800; color: #0F172A; margin-top: 2px;">{selected_p['monthly_vol']}</div>
-            </div>
-            <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 10px 14px; text-align: center;">
-                <div style="font-size: 0.70rem; font-weight: 700; color: #64748B; text-transform: uppercase;">Target Lead Time</div>
-                <div style="font-size: 1.1rem; font-weight: 800; color: #0F172A; margin-top: 2px;">{selected_p['target_lead_days']} Days</div>
-            </div>
-            <div style="background: {'#FEF2F2' if selected_p['is_delayed'] else '#F8FAFC'}; border: 1px solid {'#FCA5A5' if selected_p['is_delayed'] else '#E2E8F0'}; border-radius: 10px; padding: 10px 14px; text-align: center;">
-                <div style="font-size: 0.70rem; font-weight: 700; color: {'#B91C1C' if selected_p['is_delayed'] else '#64748B'}; text-transform: uppercase;">Actual Turnaround</div>
-                <div style="font-size: 1.1rem; font-weight: 800; color: {'#DC2626' if selected_p['is_delayed'] else '#0F172A'}; margin-top: 2px;">{selected_p['actual_lead_days']} Days</div>
-            </div>
-            <div style="background: {'#FEF2F2' if selected_p['delay_days'] > 0 else '#ECFDF5'}; border: 1px solid {'#FCA5A5' if selected_p['delay_days'] > 0 else '#A7F3D0'}; border-radius: 10px; padding: 10px 14px; text-align: center;">
-                <div style="font-size: 0.70rem; font-weight: 700; color: {'#B91C1C' if selected_p['delay_days'] > 0 else '#047857'}; text-transform: uppercase;">Lead Time Variance</div>
-                <div style="font-size: 1.1rem; font-weight: 800; color: {'#DC2626' if selected_p['delay_days'] > 0 else '#059669'}; margin-top: 2px;">{delay_indicator}</div>
-            </div>
-        </div>
-
-        <div style="display: flex; flex-direction: column; gap: 12px;">
-            <div style="background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 10px; padding: 12px 16px;">
-                <div style="font-size: 0.80rem; font-weight: 800; color: #B45309; text-transform: uppercase; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
-                    <span>[Warning]</span> Defect Mode & Physical Symptoms
-                </div>
-                <div style="font-size: 0.92rem; color: #78350F; font-weight: 600;">
-                    {selected_p['defect_mode']}
-                </div>
-            </div>
-
-            <div style="background: #F1F5F9; border: 1px solid #E2E8F0; border-radius: 10px; padding: 12px 16px;">
-                <div style="font-size: 0.80rem; font-weight: 800; color: #475569; text-transform: uppercase; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
-                    <span></span> Mill Process Bottleneck & Root Cause
-                </div>
-                <div style="font-size: 0.90rem; color: #1E293B; line-height: 1.5;">
-                    {selected_p['root_cause']}
-                </div>
-            </div>
-
-            <div style="background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 10px; padding: 14px 18px;">
-                <div style="font-size: 0.82rem; font-weight: 800; color: #1D4ED8; text-transform: uppercase; margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
-                    <span>[AI Recommendations]</span> Actionable AI Mitigation & Engineering Recommendations
-                </div>
-                <ul style="margin: 0; padding-left: 20px; font-size: 0.90rem; color: #1E3A8A; line-height: 1.6;">
-                    {rec_bullets_html}
-                </ul>
-            </div>
-        </div>
-    </div>
-    """)
-
-    # Collapsible overview for all products
-    with st.expander(f"[Summary] View Summary Cards for All {len(supp_prods)} Products Supplied by {supp_id}", expanded=False):
-        for p in supp_prods:
-            status_color = "#DC2626" if p["is_delayed"] else ("#059669" if p["delay_days"] == 0 else "#2563EB")
-            render_html(f"""
-            <div class="issue-card" style="border-left: 5px solid {status_color}; margin-bottom: 10px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                    <div style="font-weight: 800; font-size: 0.95rem; color: #0F172A;">
-                        {p['name']} <span style="font-size: 0.8rem; font-weight: 600; color: #64748B;">({p['sku']})</span>
-                    </div>
-                    <span class="{p['status_badge']}">{p['status']}</span>
-                </div>
-                <div style="font-size: 0.84rem; color: #475569; margin-bottom: 6px;">
-                    <strong>Category:</strong> {p['category']} | <strong>Lead Time:</strong> {p['actual_lead_days']}d (Target: {p['target_lead_days']}d, Delay: +{p['delay_days']}d) | <strong>Quality Score:</strong> {p['quality_score']}
-                </div>
-                <div style="background: #F8FAFC; border-radius: 8px; padding: 8px 12px; font-size: 0.86rem; color: #1E293B; line-height: 1.5;">
-                    <strong>Recommended Actions:</strong> {p['recs']}
-                </div>
-            </div>
-            """)
-
-    # Category 1 Master Diagnostic Summary
-    render_html(f"""
-    <div class="smart-card" style="border-left: 6px solid #2563EB;">
-        <div class="card-title">[Summary] Category 1 Diagnostic Summary for {supp_id}</div>
-        
-        <div style="margin-bottom: 14px;">
-            <strong style="color: #64748B; font-size: 0.85rem; text-transform: uppercase;">1. Risk Score:</strong><br>
-            <span style="font-size: 1.15rem; font-weight: 800; color: #1E3A8A;">{supp_risk}/100</span>  -  {risk_badge}
-        </div>
-
-        <div style="margin-bottom: 14px;">
-            <strong style="color: #64748B; font-size: 0.85rem; text-transform: uppercase;">2. Which Issues:</strong>
-            <p style="margin: 4px 0 0 0; font-size: 0.95rem; color: #0F172A; font-weight: 600;">
-                * Chronic high defect rate of <span style="color: #DC2626;">{recent_rate:.2f}%</span>.<br>
-                * Primary recurring defect mode: <span style="color: #DC2626;">{top_mode}</span>.<br>
-                * {capa_events} repeat CAPA non-conformance incidents recorded.
-            </p>
-        </div>
-
-        <div style="margin-bottom: 14px;">
-            <strong style="color: #64748B; font-size: 0.85rem; text-transform: uppercase;">3. Factors Affecting Risk / Proper Function:</strong>
-            <ul style="margin: 4px 0 0 0; padding-left: 18px; font-size: 0.92rem; color: #334155; line-height: 1.6;">
-                <li><strong>Tolerance Leakage:</strong> Incoming steel bar stock tested between <strong>216 HV and 230 HV</strong> (barely passed nominal receiving specs).</li>
-                <li><strong>Downstream Impact:</strong> Excessively stiff raw metal caused assembly screwdrivers to shut off prematurely, leading to <strong>${claim_cost:,.2f}</strong> in customer warranty failures.</li>
-            </ul>
-        </div>
-
-        <div class="{callout_type}">
-            <strong style="font-size: 0.85rem; color: #0F172A; text-transform: uppercase;">4. Actionable Supplier Strategy:</strong>
-            <ul style="margin: 4px 0 0 0; padding-left: 18px; font-size: 0.92rem; color: #1E293B; line-height: 1.6;">
-                <li><strong>Tighten Spec Limit:</strong> Lower incoming hardness USL from <strong>230 HV down to 216.0 HV</strong> immediately to stop downstream leakage.</li>
-                <li><strong>Issue 8D SCAR Claim:</strong> Issue formal recovery claim of <strong>${total_claim:,.2f}</strong> (In-Plant Scrap: ${scrap_cost:,.0f} | Chargebacks: ${chargebacks:,.0f} | Warranty: ${claim_cost:,.0f}).</li>
-                <li><strong>Mandatory Pre-Shipment Audit:</strong> Require supplier to submit metallurgical certs confirming hardness &le; 216 HV prior to dispatch.</li>
-            </ul>
-        </div>
-    </div>
-    """)
-
-
-# =============================================================================
-# TAB 2: RAW MATERIALS & INVENTORY LEVEL ISSUES
-# =============================================================================
-with tab_mat:
-    render_html("""
-    <div class="smart-card">
-        <div class="card-title">[Tier 2] Raw Material Level & Inventory Optimization Intelligence</div>
-        <p style="font-size: 0.92rem; color: #64748B; margin: 0 0 16px 0;">
-            Real-time evaluation: <strong>Which raw materials are at risk</strong>, <strong>how much inventory to maintain</strong>, and <strong>actions to avoid shortages without holding excess stock</strong>.
-        </p>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px;">
-            <div style="background: #F0FDF4; border: 1px solid #BBF7D0; border-left: 4px solid #16A34A; border-radius: 8px; padding: 12px 14px;">
-                <span style="background: #DCFCE7; color: #15803D; font-size: 0.72rem; font-weight: 800; padding: 2px 7px; border-radius: 4px; text-transform: uppercase;">LEVEL 1: 5 WAREHOUSE SKUs (TOP SECTION)</span>
-                <div style="font-size: 0.92rem; font-weight: 700; color: #0F172A; margin-top: 4px;">Macro Inventory & Replenishment Planning</div>
-                <div style="font-size: 0.82rem; color: #475569; margin-top: 3px; line-height: 1.5;">
-                    Tracks aggregate inventory across the <strong>5 core raw material families</strong> (AISI 4140, ST-88, M10, Ni-Cr, Titanium). Evaluates stockout risks, buffer days, safety stock, and reorder points (ROP).
-                </div>
-            </div>
-            <div style="background: #EFF6FF; border: 1px solid #BFDBFE; border-left: 4px solid #2563EB; border-radius: 8px; padding: 12px 14px;">
-                <span style="background: #DBEAFE; color: #1E40AF; font-size: 0.72rem; font-weight: 800; padding: 2px 7px; border-radius: 4px; text-transform: uppercase;">LEVEL 2: 199 RECEIVING LOTS (BOTTOM SECTION)</span>
-                <div style="font-size: 0.92rem; font-weight: 700; color: #0F172A; margin-top: 4px;">Physical Heat-Treat Batches & Metallurgical QC</div>
-                <div style="font-size: 0.82rem; color: #475569; margin-top: 3px; line-height: 1.5;">
-                    Inspects each individual physical shipment delivered across the year to replenish the 5 SKUs. Records Vickers hardness (>216 HV tolerance leakage), tensile strength, scrap count, and vendor chargebacks.
-                </div>
-            </div>
-        </div>
-    </div>
-    """)
-
-    # 1. WHICH RAW MATERIALS ARE AT RISK (INVENTORY MODEL)
-    render_html("""
-    <div style="font-size: 1.05rem; font-weight: 800; color: #0F172A; margin-bottom: 8px;">
-        1. LEVEL 1  -  Critical Raw Material SKUs at Risk (Stockout & Consumption Velocity Analysis):
-    </div>
-    """)
-
-    raw_inv = data["raw_materials_inventory"]
-    df_raw = pd.DataFrame([
-        {
-            "SKU": r["sku"],
-            "Material Name": r["name"],
-            "Supplier": r["supplier"],
-            "Current Stock": f"{r['current_stock']:,} {r['unit']}",
-            "Daily Demand": f"{r['daily_demand']} {r['unit']}/day",
-            "Days Cover": f"{r['days_cover']} days",
-            "Lead Time": f"{r['lead_time_days']} days",
-            "Risk Tier": r["risk_tier"],
-            "Key Vulnerabilities": r["risk_factors"]
-        } for r in raw_inv
-    ])
-    st.dataframe(df_raw, use_container_width=True, height=200)
-
-    st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
-
-    # 2. HOW MUCH INVENTORY SHOULD WE MAINTAIN (SAFETY STOCK & REORDER MODEL)
-    render_html("""
-    <div style="font-size: 1.05rem; font-weight: 800; color: #0F172A; margin-bottom: 8px;">
-        2. How Much Inventory Should We Maintain (Safety Stock & Reorder Model):
-    </div>
-    <p style="font-size: 0.88rem; color: #64748B; margin-bottom: 12px;">
-        Six Sigma safety stock calculation factoring in daily consumption variance and supplier lead time standard deviation:
-    </p>
-    """)
-
-    inv_calc_df = pd.DataFrame([
-        {
-            "SKU": r["sku"],
-            "Material Name": r["name"],
-            "Current Stock": f"{r['current_stock']:,} {r['unit']}",
-            "Recommended Safety Stock": f"{r['safety_stock']:,} {r['unit']}",
-            "Reorder Point (ROP)": f"{r['reorder_point']:,} {r['unit']}",
-            "Economic Order Qty (EOQ)": f"{r['eoq']:,} {r['unit']}",
-            "Status": r["risk_tier"]
-        } for r in raw_inv
-    ])
-    st.dataframe(inv_calc_df, use_container_width=True, height=200)
-
-    # Chart comparing Current Stock vs Safety Stock
-    chart_inv = pd.DataFrame([
-        {
-            "Material": r["sku"] + " (" + r["name"][:18] + "...)",
-            "Current Stock": r["current_stock"],
-            "Safety Stock": r["safety_stock"],
-            "Optimal Reorder Level": r["reorder_point"]
-        } for r in raw_inv
-    ])
-    fig_inv = go.Figure()
-    fig_inv.add_trace(go.Bar(
-        x=chart_inv["Material"],
-        y=chart_inv["Current Stock"],
-        name="Current Warehouse Stock",
-        marker_color="#2563EB"
-    ))
-    fig_inv.add_trace(go.Bar(
-        x=chart_inv["Material"],
-        y=chart_inv["Safety Stock"],
-        name="Recommended Safety Stock (Buffer)",
-        marker_color="#F59E0B"
-    ))
-    fig_inv.update_layout(
-        barmode='group',
-        height=250,
-        margin=dict(l=10, r=10, t=25, b=10),
-        yaxis=dict(title="Units / kg"),
-        xaxis=dict(title=""),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    frame["tensile_to_hardness_ratio"] = frame["tensile_strength_mpa"] / (
+        frame["material_hardness_hv"] + 1e-4
     )
-    st.plotly_chart(fig_inv, use_container_width=True)
+    for supplier in ("VENDOR_A", "VENDOR_B", "VENDOR_C"):
+        frame[f"supplier_{supplier}"] = (frame["supplier_id"] == supplier).astype(float)
+    return frame
 
-    # 3. ACTIONS TO AVOID SHORTAGES WITHOUT HOLDING EXCESS STOCK
-    render_html("""
-    <div style="font-size: 1.05rem; font-weight: 800; color: #0F172A; margin: 14px 0 8px 0;">
-        3. Strategic Actions to Avoid Shortages Without Holding Excess Stock:
-    </div>
-    """)
 
-    a1, a2 = st.columns(2)
-    with a1:
-        render_html("""
-        <div style="background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 12px; padding: 16px; height: 100%;">
-            <div style="font-weight: 800; color: #1E40AF; font-size: 0.95rem; margin-bottom: 6px;">
-                [Tier 4] Actions to Prevent Material Shortages:
-            </div>
-            <ul style="margin: 0; padding-left: 18px; font-size: 0.88rem; color: #1E293B; line-height: 1.6;">
-                <li><strong>Dynamic ROP Triggering:</strong> Automate replenishment orders exactly when stock hits the calculated <strong>Reorder Point (ROP)</strong> rather than relying on fixed monthly schedules.</li>
-                <li><strong>Dual-Sourcing Critical Steel (AISI 4140):</strong> Split allocations (70% primary, 30% secondary) so that Vendor B's 10-day heat-treatment backlog cannot halt line production.</li>
-                <li><strong>Adaptive Recipe Compensation:</strong> Safely process borderline raw stock (216 - 225 HV) by offsetting torque (+0.38 Nm) and angle (+11.4°), preventing scrap and avoiding sudden replenishment panics.</li>
-            </ul>
-        </div>
-        """)
+def _historical_batch_scores(material: pd.DataFrame, model) -> pd.DataFrame:
+    frame = _batch_feature_frame(material)
+    features = frame.reindex(columns=model.feature_names, fill_value=0.0)
+    probabilities = model.model.predict_proba(features)[:, 1]
+    frame["model_risk_probability"] = probabilities
+    frame["model_risk_tier"] = np.select(
+        [probabilities >= 0.6, probabilities >= 0.3],
+        ["HIGH_RISK_MARGINAL", "BORDERLINE_MONITOR"],
+        default="STANDARD_PASS",
+    )
+    frame.loc[
+        (frame["material_hardness_hv"] < frame["lower_spec_limit"])
+        | (frame["material_hardness_hv"] > frame["upper_spec_limit"]),
+        "model_risk_tier",
+    ] = "OUT_OF_SPEC_REJECT"
+    return frame
 
-    with a2:
-        render_html("""
-        <div style="background: #FEF3C7; border: 1px solid #FDE68A; border-radius: 12px; padding: 16px; height: 100%;">
-            <div style="font-weight: 800; color: #92400E; font-size: 0.95rem; margin-bottom: 6px;">
-                [Preventive Standard] Actions to Avoid Holding Excess Stock:
-            </div>
-            <ul style="margin: 0; padding-left: 18px; font-size: 0.88rem; color: #1E293B; line-height: 1.6;">
-                <li><strong>Strict EOQ Batch Caps:</strong> Restrict purchase order batch sizes to the Economic Order Quantity (e.g. 9,500 kg cap on 4140 steel) to prevent working capital bloat.</li>
-                <li><strong>Pause Titanium Replenishment:</strong> Freeze PO-9804 replenishment for 12 days to burn off 2.38x surplus inventory, liberating <strong>$48,000 in tied-up cash</strong>.</li>
-                <li><strong>Vendor-Managed Inventory (VMI):</strong> Require Vendor C to maintain a 1,000-unit consignment buffer at local freight hub, billed only when consumed on the line.</li>
-            </ul>
-        </div>
-        """)
 
-    st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
-
-    # =========================================================================
-    # COMPLETE 199 RAW MATERIAL LOTS MASTER & RISK LEVEL ANALYZER
-    # =========================================================================
-    render_html("""
-    <div class="smart-card">
-        <div class="card-title">[Summary] LEVEL 2  -  Receiving Inspection Master & Physical Delivery Lots (All 199 Batches)</div>
-        <p style="font-size: 0.9rem; color: #64748B; margin-bottom: 12px;">
-            Full metallurgical inspection history across all 199 receiving shipments from <code>data/material_batch_master.csv</code> delivered to supply the 5 SKUs above. Evaluates hardness tolerance leakage (&gt;216 HV), scrap induction, and financial liability.
-        </p>
-        <div style="background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 10px; padding: 14px 18px; margin-top: 10px; font-size: 0.88rem; color: #1E3A8A; line-height: 1.6;">
-            <strong>[AI Recommendations] Why Are There 5 SKUs Above vs. 199 Batches Below?</strong><br>
-            * <strong>Level 1 (Top  -  5 Items):</strong> Represents the <strong>5 high-level Warehouse Material Families / SKUs</strong> (AISI 4140 Steel, ST-88 Studs, M10 Fasteners, Ni-Cr Bushings, Titanium Plates) for inventory planning, safety stock, and reorder points.<br>
-            * <strong>Level 2 (Bottom  -  199 Items):</strong> Represents the <strong>199 individual physical delivery truckloads & heat-treat lots</strong> received from suppliers across the year to fulfill those 5 materials. For example, <strong>Vendor B delivered 70 individual lots of AISI 4140 Steel</strong>, where 35 lots exceeded 216 HV hardness, causing automated screwdriver stalls and scrap.
-        </div>
-    </div>
-    """)
-
-    all_mat = data["material_enriched"]
-    
-    # Summary Metrics across all 199 Lots
-    tot_lots = len(all_mat)
-    crit_lots = len(all_mat[all_mat["Risk_Level"].str.contains("CRITICAL")])
-    elev_lots = len(all_mat[all_mat["Risk_Level"].str.contains("ELEVATED")])
-    norm_lots = len(all_mat[all_mat["Risk_Level"].str.contains("NORMAL")])
-    tot_scrap = all_mat["scrap_count"].sum()
-    tot_cb = all_mat["chargeback_amount_usd"].sum()
-
-    m1, m2, m3, m4, m5, m6 = st.columns(6)
-    with m1:
-        render_html(f'<div class="metric-card-white"><div class="metric-card-label">TOTAL RAW LOTS</div><div class="metric-card-number" style="color: #2563EB;">{tot_lots}</div><div class="metric-card-delta">Physical Shipments</div></div>')
-    with m2:
-        render_html(f'<div class="metric-card-white"><div class="metric-card-label">CRITICAL RISK LOTS</div><div class="metric-card-number" style="color: #DC2626;">{crit_lots}</div><div class="metric-card-delta" style="color: #DC2626;">{(crit_lots/tot_lots)*100:.1f}% of batches</div></div>')
-    with m3:
-        render_html(f'<div class="metric-card-white"><div class="metric-card-label">ELEVATED RISK LOTS</div><div class="metric-card-number" style="color: #D97706;">{elev_lots}</div><div class="metric-card-delta" style="color: #D97706;">{(elev_lots/tot_lots)*100:.1f}% of batches</div></div>')
-    with m4:
-        render_html(f'<div class="metric-card-white"><div class="metric-card-label">NORMAL / SAFE LOTS</div><div class="metric-card-number" style="color: #059669;">{norm_lots}</div><div class="metric-card-delta" style="color: #059669;">{(norm_lots/tot_lots)*100:.1f}% compliant</div></div>')
-    with m5:
-        render_html(f'<div class="metric-card-white"><div class="metric-card-label">TOTAL SCRAP CAUSED</div><div class="metric-card-number" style="color: #DC2626;">{tot_scrap:,}</div><div class="metric-card-delta">Scrapped Assemblies</div></div>')
-    with m6:
-        render_html(f'<div class="metric-card-white"><div class="metric-card-label">CHARGEBACK LIABILITY</div><div class="metric-card-number" style="color: #2563EB;">${tot_cb:,.0f}</div><div class="metric-card-delta">Vendor Demand Claim</div></div>')
-
-    st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
-
-    # Interactive Filters for All 199 Batches
-    f_col1, f_col2, f_col3, f_col4 = st.columns([1.2, 0.9, 1, 1.1])
-    with f_col1:
-        mat_filter = st.selectbox(
-            "Filter by Parent Material SKU:",
-            ["All Materials (199 Lots)", "RAW-4140: AISI 4140 Steel (Vendor B)", "RAW-ST88 / M10: Fasteners (Vendor A)", "RAW-NICR / TI01: Bushings & Ti (Vendor C)"],
-            key="raw_mat_filter"
-        )
-    with f_col2:
-        supp_filter = st.selectbox(
-            "Filter by Supplier:",
-            ["All Suppliers", "VENDOR_A", "VENDOR_B", "VENDOR_C"],
-            key="raw_supp_filter"
-        )
-    with f_col3:
-        risk_filter = st.selectbox(
-            "Filter by Risk Level:",
-            ["All Risk Tiers", "[Critical] CRITICAL RISK", "[Elevated] ELEVATED RISK", "[Optimal] NORMAL / SAFE"],
-            key="raw_risk_filter"
-        )
-    with f_col4:
-        search_lot = st.text_input("Search Batch ID:", "", placeholder="e.g. LOT-2026-RAW-004", key="raw_search")
-
-    # Apply filters
-    filtered_mat = all_mat.copy()
-    if mat_filter != "All Materials (199 Lots)":
-        if "RAW-4140" in mat_filter:
-            filtered_mat = filtered_mat[filtered_mat["supplier_id"] == "VENDOR_B"]
-        elif "RAW-ST88" in mat_filter:
-            filtered_mat = filtered_mat[filtered_mat["supplier_id"] == "VENDOR_A"]
-        elif "RAW-NICR" in mat_filter:
-            filtered_mat = filtered_mat[filtered_mat["supplier_id"] == "VENDOR_C"]
-    if supp_filter != "All Suppliers":
-        filtered_mat = filtered_mat[filtered_mat["supplier_id"] == supp_filter]
-    if risk_filter != "All Risk Tiers":
-        filtered_mat = filtered_mat[filtered_mat["Risk_Level"] == risk_filter]
-    if search_lot:
-        filtered_mat = filtered_mat[filtered_mat["material_batch_id"].str.contains(search_lot, case=False)]
-
-    # Display All 199 Batches in Formatted Table with Parent SKU & Live ML Predictions
-    display_df = filtered_mat[[
-        "material_batch_id", "parent_sku", "supplier_id", "material_hardness_hv",
-        "tensile_strength_mpa", "Safe_Margin_HV", "ML_Risk_Prob", "Risk_Level",
-        "Adaptive_Torque_Offset", "material_risk_status", "scrap_count", "chargeback_amount_usd"
-    ]].rename(columns={
-        "material_batch_id": "Batch ID",
-        "parent_sku": "Parent Material SKU",
-        "supplier_id": "Supplier",
-        "material_hardness_hv": "Hardness (HV)",
-        "tensile_strength_mpa": "Tensile (MPa)",
-        "Safe_Margin_HV": "Margin to Safe HV",
-        "ML_Risk_Prob": "ML Defect Risk",
-        "Risk_Level": "Risk Level",
-        "Adaptive_Torque_Offset": "ML Recipe Offset",
-        "material_risk_status": "QC Status",
-        "scrap_count": "Downstream Scrap",
-        "chargeback_amount_usd": "Chargeback ($)"
+def _evaluate_material_batch(
+    supplier_id: str,
+    hardness: float,
+    tensile: float,
+    batch_size: int,
+    lower_limit: float = 180.0,
+    upper_limit: float = 230.0,
+):
+    return _api_post("/api/tier2/evaluate_material", {
+        "material_hardness_hv": hardness,
+        "tensile_strength_mpa": tensile,
+        "lower_spec_limit": lower_limit,
+        "upper_spec_limit": upper_limit,
+        "supplier_id": supplier_id,
+        "batch_size_units": batch_size,
     })
 
-    st.markdown(f"**Showing {len(display_df)} of {tot_lots} Raw Material Lots (Evaluated via Random Forest & Adaptive ML Engine):**")
-    st.dataframe(display_df, use_container_width=True, height=280)
 
-    # GENERAL INFORMATION & METALLURGICAL RISK BASELINE GUIDE
-    render_html("""
-    <div class="smart-card" style="border-left: 6px solid #2563EB; margin-top: 14px;">
-        <div class="card-title"> General Information & Metallurgical Risk Baseline Guide</div>
-        <div style="font-size: 0.90rem; color: #334155; line-height: 1.7;">
-            <p><strong>* The 216.0 HV Tolerance Leakage Phenomenon:</strong><br>
-            While nominal engineering blueprints define incoming material acceptance between <strong>180.0 HV and 230.0 HV</strong>, machine screwdrivers and assembly bits are calibrated for nominal 200 HV. Raw metal batches measuring between <strong>216.0 HV and 230.0 HV</strong> nominally pass receiving inspection, but cause automated torque drivers to spike prematurely, stalling before completing the 360° seating turn.
-            </p>
-            <p><strong>* Risk Classification Criteria:</strong><br>
-            - <span class="status-badge-red">[Critical] CRITICAL RISK</span>: Hardness &ge; 216.0 HV, marked <code>MARGINAL_HIGH</code>, or generated &gt; 200 scrap parts. <em>Quarantine immediately or apply adaptive torque offset (+0.38 Nm, +11.4° shutoff angle).</em><br>
-            - <span class="status-badge-orange">[Elevated] ELEVATED RISK</span>: Hardness 210.0 to 215.9 HV or generated 100 - 200 scrap units. <em>Continuous in-process torque monitoring required.</em><br>
-            - <span class="status-badge-green">[Optimal] NORMAL / SAFE</span>: Hardness &lt; 210.0 HV and minimal scrap. <em>Run standard production recipe without modification.</em>
-            </p>
-            <p><strong>* Financial Protection Protocol:</strong><br>
-            All scrap generated from critical lots is automatically aggregated into the quarterly <strong>8D Supplier Corrective Action Request (SCAR)</strong>, recovering <strong>$55 per scrapped unit</strong> plus direct warranty chargebacks.
-            </p>
-        </div>
-    </div>
-    """)
+def _risk_probability_styles(values: pd.Series) -> list[str]:
+    styles = []
+    for probability in values:
+        high, moderate = (60, 30) if probability > 1 else (0.6, 0.3)
+        if probability >= high:
+            color = "#FECACA"
+        elif probability >= moderate:
+            color = "#FEF3C7"
+        else:
+            color = "#DCFCE7"
+        styles.append(f"background-color: {color}; color: #1F2937;")
+    return styles
 
 
-# =============================================================================
-# TAB 3: MANUFACTURING LEVEL (FACTORIES & UNITS WITH MEANINGFUL TARGETS)
-# =============================================================================
-with tab_mfg_unit:
-    render_html("""
-    <div class="smart-card">
-        <div class="card-title">[Tier 3] Manufacturing Level  -  Factory Units & Facility Operations</div>
-        <p style="font-size: 0.92rem; color: #64748B; margin: 0 0 16px 0;">
-            Select any manufacturing unit or factory facility to inspect operational performance measured against Six Sigma benchmark targets, downtime variances, material shortages, defect rates, and diagnostic root causes with resolution actions.
-        </p>
-    </div>
-    """)
+def _failure_mode_features(
+    station_id: str,
+    spindle_temp_c: float,
+    system_pressure_psi: float,
+    vibration_rms_g: float,
+    tool_wear_index: float,
+    hours_since_service: float,
+    peak_torque_nm: float,
+    shutoff_angle_deg: float,
+    torque_status: str,
+    material_hardness_hv: float,
+    tensile_strength_mpa: float,
+) -> pd.DataFrame:
+    row = {
+        "peak_torque_nm": peak_torque_nm,
+        "shutoff_angle_deg": shutoff_angle_deg,
+        "spindle_temp_c": spindle_temp_c,
+        "system_pressure_psi": system_pressure_psi,
+        "vibration_rms_g": vibration_rms_g,
+        "tool_wear_index": tool_wear_index,
+        "hours_since_service": hours_since_service,
+        "torque_energy_proxy": peak_torque_nm * np.deg2rad(shutoff_angle_deg),
+        "tool_stress_factor": tool_wear_index * vibration_rms_g,
+        "thermal_vibration_index": spindle_temp_c * vibration_rms_g,
+        "hydraulic_thermal_ratio": system_pressure_psi / (spindle_temp_c + 1e-3),
+        "material_tool_resistance": material_hardness_hv * (tool_wear_index + 1.0),
+        "torque_delta_nominal": peak_torque_nm - 12.5,
+        "angle_delta_nominal": shutoff_angle_deg - 360.0,
+        "torque_status_nok": float(torque_status != "OK"),
+        "torque_status_high": float(torque_status == "NOK_HIGH"),
+        "torque_status_low": float(torque_status == "NOK_LOW"),
+        "material_hardness_hv": material_hardness_hv,
+        "tensile_strength_mpa": tensile_strength_mpa,
+    }
+    row.update({
+        f"st_{candidate}": float(station_id == candidate)
+        for candidate in ("ST-10", "ST-20", "ST-30", "ST-40")
+    })
+    return pd.DataFrame([row])
 
-    col_unit_sel, col_unit_badge = st.columns([1.5, 1])
-    with col_unit_sel:
-        unit_keys = list(data["mfg_units"].keys())
-        unit_names = [data["mfg_units"][k]["name"] for k in unit_keys]
-        selected_unit_name = st.selectbox(
-            "Select Manufacturing Unit or Factory:",
-            unit_names,
-            key="mfg_unit_select"
+
+def _render_supplier_tab(models, data):
+    st.header("Supplier / Vendor")
+    suppliers = sorted(data["supplier_history"]["supplier_id"].unique())
+    supplier_id = st.selectbox("Supplier", suppliers, key="supplier_selector")
+    try:
+        profiles = _api_get("/api/tier3/suppliers")
+        catalog_response = _api_get("/api/tier3/catalog")
+    except Exception as exc:
+        st.error(_api_error_message(exc))
+        return
+    profile = profiles.get(supplier_id)
+    if profile is None:
+        st.error(f"The supplier API returned no profile for {supplier_id}.")
+        return
+    supplier_batches = data["material"].query("supplier_id == @supplier_id")
+    supplier_catalog = pd.DataFrame(
+        catalog_response.get("products_by_supplier", {}).get(supplier_id, [])
+    )
+    if supplier_catalog.empty:
+        st.warning(f"The supplier API returned no catalog products for {supplier_id}.")
+        return
+    supplier_catalog["delay_days"] = pd.to_numeric(
+        supplier_catalog["delay_days"], errors="raise"
+    )
+    most_delayed = supplier_catalog.sort_values(
+        ["delay_days", "actual_lead_days"], ascending=False
+    ).iloc[0]
+    scored_batches = _historical_batch_scores(
+        supplier_batches, models["marginal_batch_classifier"]
+    )
+    claims = data["warranty"].query("supplier_id == @supplier_id")
+
+    st.subheader("Most-delayed product")
+    product_cols = st.columns([2, 1, 1, 1])
+    product_cols[0].markdown(
+        f"**Product**  \n{most_delayed['product_name']}  \n"
+        f"`{most_delayed['sku']}`"
+    )
+    product_cols[1].metric("Delay", f"{most_delayed['delay_days']:.0f} days")
+    product_cols[2].metric(
+        "Actual / target lead time",
+        f"{most_delayed['actual_lead_days']} / {most_delayed['target_lead_days']} days",
+    )
+    product_cols[3].metric("Delivery risk", most_delayed["risk_level"])
+
+    metric_cols = st.columns(4)
+    metric_cols[0].metric(
+        "Latest recorded defect rate",
+        f"{profile['latest_recorded_defect_rate_pct']:.2f}%",
+    )
+    metric_cols[1].metric("Historical trend", profile["historical_trend"])
+    metric_cols[2].metric("Risk rating", profile["risk_rating"])
+    metric_cols[3].metric("Warranty claim cost", f"${claims['claim_cost_usd'].sum():,.0f}")
+    st.caption(
+        f"Supplier trend history ends {profile['data_as_of']}; this compares the first and last "
+        "available snapshots and is not a current rolling 30-day forecast."
+    )
+
+    st.subheader("Recorded product catalog")
+    st.caption(
+        "Catalog and lead times are recorded source data, not ML predictions. "
+        "Products are sorted by longest recorded delivery delay."
+    )
+    st.dataframe(
+        supplier_catalog[
+            [
+                "sku",
+                "product_name",
+                "category",
+                "target_lead_days",
+                "actual_lead_days",
+                "delay_days",
+                "quality_score_pct",
+                "risk_level",
+            ]
+        ].sort_values(
+            ["delay_days", "actual_lead_days"], ascending=False
+        ).rename(columns={
+            "sku": "SKU",
+            "product_name": "Product",
+            "category": "Category",
+            "target_lead_days": "Target lead (days)",
+            "actual_lead_days": "Actual lead (days)",
+            "delay_days": "Delay (days)",
+            "quality_score_pct": "Recorded quality score (%)",
+            "risk_level": "Recorded delivery risk",
+        }),
+        width="stretch",
+        hide_index=True,
+    )
+
+    st.subheader("Individual product material-risk analysis")
+    st.caption(
+        "The material models use hardness, tensile strength, specification limits, and supplier. "
+        "The catalog has no SKU-to-batch measurement link, so enter the receiving measurements "
+        "for this product's batch. Apply these models only to material comparable to the model's "
+        "metal-batch training data."
+    )
+    product_options = supplier_catalog["sku"].tolist()
+    default_hardness = float(supplier_batches["material_hardness_hv"].median())
+    default_tensile = float(supplier_batches["tensile_strength_mpa"].median())
+    with st.form("supplier_product_material_analysis"):
+        product_sku = st.selectbox(
+            "Product to evaluate",
+            product_options,
+            format_func=lambda sku: (
+                f"{sku} — "
+                f"{supplier_catalog.loc[supplier_catalog['sku'] == sku, 'product_name'].iloc[0]}"
+            ),
         )
-        selected_unit_key = unit_keys[unit_names.index(selected_unit_name)]
-        unit_data = data["mfg_units"][selected_unit_key]
+        input_cols = st.columns(4)
+        with input_cols[0]:
+            hardness = st.number_input(
+                "Incoming hardness (HV)",
+                min_value=100.0,
+                max_value=400.0,
+                value=default_hardness,
+            )
+        with input_cols[1]:
+            tensile = st.number_input(
+                "Incoming tensile strength (MPa)",
+                min_value=200.0,
+                max_value=1500.0,
+                value=default_tensile,
+            )
+        with input_cols[2]:
+            batch_size = st.number_input(
+                "Batch size (units)", min_value=1, value=1200, step=100
+            )
+        with input_cols[3]:
+            st.markdown("**Specification limits (HV)**")
+            lower_limit = st.number_input(
+                "Lower limit", min_value=0.0, value=180.0, key="supplier_product_lsl"
+            )
+            upper_limit = st.number_input(
+                "Upper limit", min_value=0.1, value=230.0, key="supplier_product_usl"
+            )
+        evaluate_product = st.form_submit_button("Run product ML analysis")
 
-    with col_unit_badge:
-        render_html(f"""
-        <div style="display: flex; justify-content: flex-end; align-items: center; height: 100%;">
-            <span class="{unit_data['status_badge']}" style="font-size: 0.9rem; padding: 6px 14px;">
-                {unit_data['overall_status']}
-            </span>
-        </div>
-        """)
+    if evaluate_product:
+        if lower_limit >= upper_limit:
+            st.error("The lower specification limit must be less than the upper specification limit.")
+        else:
+            try:
+                result = _evaluate_material_batch(
+                    supplier_id,
+                    hardness,
+                    tensile,
+                    int(batch_size),
+                    lower_limit,
+                    upper_limit,
+                )
+                st.markdown(f"**ML evaluation for {product_sku}**")
+                result_cols = st.columns(3)
+                result_cols[0].write("**Random Forest risk classifier**")
+                result_cols[0].json(result["risk_evaluation"])
+                result_cols[1].write("**Gradient Boosting impact forecast**")
+                result_cols[1].json(result["downstream_forecast"])
+                result_cols[2].write("**Adaptive compensation rules**")
+                result_cols[2].json(result["adaptive_compensation"])
+            except Exception as exc:
+                st.error(f"Product material model inference failed: {type(exc).__name__}: {exc}")
 
-    render_html(f"""
-    <div style="font-size: 0.88rem; color: #64748B; margin-top: 4px;">
-         <strong>Location:</strong> {unit_data['location']} | <strong>Specialization:</strong> {unit_data['focus']}
-    </div>
-    """)
+    st.subheader("Supplier batches scored by the Random Forest")
+    st.caption(
+        "Historical batch predictions use recorded measurements and are retrospective inference, "
+        "not a prospective supplier-quality forecast."
+    )
+    st.metric(
+        "Mean predicted batch risk",
+        f"{scored_batches['model_risk_probability'].mean():.1%}",
+    )
+    supplier_score_view = scored_batches[
+        [
+            "material_batch_id",
+            "material_hardness_hv",
+            "tensile_strength_mpa",
+            "model_risk_probability",
+            "model_risk_tier",
+        ]
+    ].rename(
+        columns={
+            "material_batch_id": "Batch ID",
+            "material_hardness_hv": "Hardness (HV)",
+            "tensile_strength_mpa": "Tensile (MPa)",
+            "model_risk_probability": "Predicted risk probability",
+            "model_risk_tier": "Predicted tier",
+        }
+    )
+    st.dataframe(
+        supplier_score_view.style.apply(
+            _risk_probability_styles,
+            subset=["Predicted risk probability"],
+        ).format({"Predicted risk probability": "{:.1%}"}),
+        width="stretch",
+        hide_index=True,
+    )
 
-    st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
-
-    # 6 OVERALL PERFORMANCE KPI CARDS WITH MEANINGFUL TARGETS
-    u1, u2, u3, u4, u5, u6 = st.columns(6)
-    with u1:
-        render_html(f"""
-        <div class="metric-card-white">
-            <div class="metric-card-label">TOTAL MACHINES</div>
-            <div class="metric-card-number" style="color: #2563EB;">{unit_data["active_machines"]}/{unit_data["total_machines"]}</div>
-            <div class="metric-card-target">{unit_data["avail_target"]}</div>
-            <div class="metric-card-delta" style="color: {unit_data['avail_color']};">{unit_data["avail_status"]}</div>
-        </div>
-        """)
-    with u2:
-        render_html(f"""
-        <div class="metric-card-white">
-            <div class="metric-card-label">MACHINE DOWNTIME</div>
-            <div class="metric-card-number" style="color: {unit_data['downtime_color']};">{unit_data["downtime_hours"]}h</div>
-            <div class="metric-card-target">{unit_data["downtime_target"]}</div>
-            <div class="metric-card-delta" style="color: {unit_data['downtime_color']};">{unit_data["downtime_status"]}</div>
-        </div>
-        """)
-    with u3:
-        render_html(f"""
-        <div class="metric-card-white">
-            <div class="metric-card-label">MFG DELAYS</div>
-            <div class="metric-card-number" style="color: {unit_data['delays_color']};">{unit_data["mfg_delays_hrs"]}h</div>
-            <div class="metric-card-target">{unit_data["delays_target"]}</div>
-            <div class="metric-card-delta" style="color: {unit_data['delays_color']};">{unit_data["delays_status"]}</div>
-        </div>
-        """)
-    with u4:
-        render_html(f"""
-        <div class="metric-card-white">
-            <div class="metric-card-label">MATERIAL SHORTAGES</div>
-            <div class="metric-card-number" style="color: {unit_data['shortages_color']};">{unit_data["material_shortages_count"]}</div>
-            <div class="metric-card-target">{unit_data["shortages_target"]}</div>
-            <div class="metric-card-delta" style="color: {unit_data['shortages_color']};">{unit_data["shortages_status"]}</div>
-        </div>
-        """)
-    with u5:
-        render_html(f"""
-        <div class="metric-card-white">
-            <div class="metric-card-label">DEFECT RATE</div>
-            <div class="metric-card-number" style="color: {unit_data['defect_color']};">{unit_data["defect_rate"]}</div>
-            <div class="metric-card-target">{unit_data["defect_target"]}</div>
-            <div class="metric-card-delta" style="color: {unit_data['defect_color']};">{unit_data["defect_status"]}</div>
-        </div>
-        """)
-    with u6:
-        render_html(f"""
-        <div class="metric-card-white">
-            <div class="metric-card-label">OEE EFFICIENCY</div>
-            <div class="metric-card-number" style="color: {unit_data['oee_color']};">{unit_data["oee_efficiency"]}</div>
-            <div class="metric-card-target">{unit_data["oee_target"]}</div>
-            <div class="metric-card-delta" style="color: {unit_data['oee_color']};">{unit_data["oee_status"]}</div>
-        </div>
-        """)
-
-    st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
-
-    # LIVE ML INFERENCE: Station Defect Risk Ranking (ShiftDefectPredictor)
-    shift_pred = models.get("shift_defect_predictor") if models else None
-    if shift_pred and selected_unit_key == "UNIT_1":
-        st_data = pd.DataFrame([
-            {"station_id": "ST-10", "planned_units": 450, "line_speed_upm": 1.2, "spindle_temp_c": 62.0, "vibration_rms_g": 2.1, "tool_wear_index": 55.0, "total_units": 450, "avg_line_speed": 1.2, "std_line_speed": 0.05, "operator_tenure_yrs": 3.5, "mean_spindle_temp": 62.0, "max_spindle_temp": 68.0, "mean_vibration": 2.1, "max_vibration": 2.5, "mean_pressure": 115.0, "mean_tool_wear": 55.0, "max_tool_wear": 60.0, "mean_peak_torque": 13.2, "std_peak_torque": 0.4, "mean_shutoff_angle": 285.0, "station_ST-10": 1.0, "station_ST-20": 0.0, "station_ST-30": 0.0, "station_ST-40": 0.0, "shift_SHIFT_1": 1.0, "shift_SHIFT_2": 0.0, "shift_SHIFT_3": 0.0},
-            {"station_id": "ST-20", "planned_units": 450, "line_speed_upm": 1.2, "spindle_temp_c": 68.5, "vibration_rms_g": 2.85, "tool_wear_index": 78.0, "total_units": 450, "avg_line_speed": 1.2, "std_line_speed": 0.05, "operator_tenure_yrs": 2.0, "mean_spindle_temp": 68.5, "max_spindle_temp": 74.0, "mean_vibration": 2.85, "max_vibration": 3.2, "mean_pressure": 118.0, "mean_tool_wear": 78.0, "max_tool_wear": 85.0, "mean_peak_torque": 14.1, "std_peak_torque": 0.6, "mean_shutoff_angle": 270.0, "station_ST-10": 0.0, "station_ST-20": 1.0, "station_ST-30": 0.0, "station_ST-40": 0.0, "shift_SHIFT_1": 1.0, "shift_SHIFT_2": 0.0, "shift_SHIFT_3": 0.0},
-            {"station_id": "ST-30", "planned_units": 450, "line_speed_upm": 1.2, "spindle_temp_c": 54.0, "vibration_rms_g": 1.4, "tool_wear_index": 35.0, "total_units": 450, "avg_line_speed": 1.2, "std_line_speed": 0.05, "operator_tenure_yrs": 5.0, "mean_spindle_temp": 54.0, "max_spindle_temp": 58.0, "mean_vibration": 1.4, "max_vibration": 1.7, "mean_pressure": 112.0, "mean_tool_wear": 35.0, "max_tool_wear": 40.0, "mean_peak_torque": 12.4, "std_peak_torque": 0.2, "mean_shutoff_angle": 358.0, "station_ST-10": 0.0, "station_ST-20": 0.0, "station_ST-30": 1.0, "station_ST-40": 0.0, "shift_SHIFT_1": 1.0, "shift_SHIFT_2": 0.0, "shift_SHIFT_3": 0.0},
-            {"station_id": "ST-40", "planned_units": 450, "line_speed_upm": 1.2, "spindle_temp_c": 58.0, "vibration_rms_g": 1.8, "tool_wear_index": 48.0, "total_units": 450, "avg_line_speed": 1.2, "std_line_speed": 0.05, "operator_tenure_yrs": 4.0, "mean_spindle_temp": 58.0, "max_spindle_temp": 62.0, "mean_vibration": 1.8, "max_vibration": 2.1, "mean_pressure": 114.0, "mean_tool_wear": 48.0, "max_tool_wear": 52.0, "mean_peak_torque": 12.6, "std_peak_torque": 0.3, "mean_shutoff_angle": 355.0, "station_ST-10": 0.0, "station_ST-20": 0.0, "station_ST-30": 0.0, "station_ST-40": 1.0, "shift_SHIFT_1": 1.0, "shift_SHIFT_2": 0.0, "shift_SHIFT_3": 0.0},
-        ])
-        ranked_st = shift_pred.rank_station_risk(st_data)
-        st_cards_html = "".join([
-            f'<div style="background: {"#FEF2F2" if item["risk_level"] == "HIGH" else ("#FFFBEB" if item["risk_level"] == "MEDIUM" else "#F0FDF4")}; border: 1px solid {"#FCA5A5" if item["risk_level"] == "HIGH" else ("#FDE68A" if item["risk_level"] == "MEDIUM" else "#BBF7D0")}; border-radius: 8px; padding: 10px 14px; text-align: center;"><div style="font-size: 0.76rem; font-weight: 800; color: #64748B;">RANK #{item["station_rank"]} &bull; {item["station_id"]}</div><div style="font-size: 1.2rem; font-weight: 800; color: {"#DC2626" if item["risk_level"] == "HIGH" else ("#D97706" if item["risk_level"] == "MEDIUM" else "#059669")}; margin: 2px 0;">{item["predicted_defect_count"]:.0f} Defects</div><span style="font-size: 0.72rem; font-weight: 700; color: {"#991B1B" if item["risk_level"] == "HIGH" else ("#92400E" if item["risk_level"] == "MEDIUM" else "#166534")}; text-transform: uppercase;">{item["risk_level"]} RISK</span></div>'
-            for item in ranked_st
-        ])
-        render_html(f"""
-        <div class="smart-card" style="border-left: 5px solid #2563EB; margin-bottom: 14px;">
-            <div class="card-title" style="font-size: 1rem; margin-bottom: 6px;">
-                <span>[Machine Learning]</span> Live Station Defect Risk Ranking (LightGBM Shift Defect Predictor)
-            </div>
-            <div style="font-size: 0.85rem; color: #64748B; margin-bottom: 10px;">
-                Continuous shift-level defect prediction across automated fastening cells based on spindle thermals, line speed, and tool vibration telemetry:
-            </div>
-            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;">
-                {st_cards_html}
-            </div>
-        </div>
-        """)
-
-    # IDENTIFIED MANUFACTURING ISSUES
-    render_html(f"""
-    <div class="smart-card">
-        <div class="card-title">[Warning] Identified Manufacturing Issues for {unit_data['name'].split(' - ')[1].strip()}</div>
-        <p style="font-size: 0.9rem; color: #64748B; margin-bottom: 16px;">
-            Detailed root cause failure analysis, severity rankings, and prescribed resolution & preventive actions:
-        </p>
-    </div>
-    """)
-
-    for issue in unit_data["issues"]:
-        render_html(f"""
-        <div class="issue-card" style="border-left: 5px solid #2563EB;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                <div style="font-weight: 800; font-size: 1rem; color: #0F172A;">
-                    {issue['title']}
-                </div>
-                <div style="display: flex; gap: 8px; align-items: center;">
-                    <span style="font-size: 0.8rem; font-weight: 700; color: #64748B;">{issue['type']}</span>
-                    <span>{issue['severity']}</span>
-                </div>
-            </div>
-            
-            <div style="margin: 8px 0; font-size: 0.9rem; color: #334155;">
-                <strong style="color: #64748B; text-transform: uppercase; font-size: 0.78rem;">Possible Root Cause:</strong><br>
-                {issue['root_cause']}
-            </div>
-
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px;">
-                <div style="background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 8px; padding: 10px 14px; font-size: 0.86rem; color: #1E40AF;">
-                    <strong>[Immediate Action] Recommended Action to Resolve:</strong><br>
-                    {issue['resolve_action']}
-                </div>
-                <div style="background: #ECFDF5; border: 1px solid #A7F3D0; border-radius: 8px; padding: 10px 14px; font-size: 0.86rem; color: #065F46;">
-                    <strong>[Preventive Standard] Recommended Preventive Action:</strong><br>
-                    {issue['prevent_action']}
-                </div>
-            </div>
-        </div>
-        """)
+    with st.expander("Warranty trace, batch trace, SCAR, and tolerance analysis"):
+        with st.form("supplier_analysis"):
+            claim_id = st.text_input("Warranty claim ID")
+            batch_id = st.text_input("Material batch ID")
+            generate_scar = st.checkbox("Generate supplier SCAR")
+            submit = st.form_submit_button("Run analysis")
+        if submit:
+            if claim_id.strip():
+                trace = models["trace_engine"].trace_claim(claim_id.strip())
+                if trace is None:
+                    st.warning(f"No claim found for {claim_id.strip()}.")
+                else:
+                    st.subheader("Warranty genealogy")
+                    st.json(trace)
+            if batch_id.strip():
+                trace = models["trace_engine"].trace_batch(batch_id.strip())
+                if trace.get("supplier_id") == "UNKNOWN":
+                    st.warning(f"No material batch found for {batch_id.strip()}.")
+                else:
+                    st.subheader("Batch warranty trace")
+                    st.json(trace)
+            if generate_scar:
+                st.subheader("Generated SCAR")
+                st.json(models["scar_generator"].generate_scar(supplier_id))
+        st.subheader("Tolerance leakage analysis")
+        st.json(models["gap_analyzer"].run_gap_analysis())
 
 
-# =============================================================================
-# TAB 4: PRODUCTION LEVEL (LINES & ORDERS)
-# =============================================================================
-with tab_prod_line:
-    render_html("""
-    <div class="smart-card">
-        <div class="card-title">[Tier 4] Production Level  -  Lines, Work Orders & Throughput Intelligence</div>
-        <p style="font-size: 0.92rem; color: #64748B; margin: 0 0 16px 0;">
-            Select any production line or production work order to inspect planned vs actual output, completion schedules, line bottlenecks, rejection rates, and order-specific recommendations.
-        </p>
-    </div>
-    """)
+def _render_material_tab(models, data):
+    st.header("Raw Material")
+    try:
+        material_monitor = _api_get("/api/tier2/materials")
+    except Exception as exc:
+        st.error(_api_error_message(exc))
+        return
+    st.caption(
+        "Quality risk is predicted by the trained Random Forest through the API. Incoming lot "
+        "counts, inspection status, scrap, and chargebacks are recorded values. No on-hand "
+        "inventory or usage history is available to forecast stock exhaustion."
+    )
+    summary = material_monitor["inspection_summary"]
+    supplier_batches = pd.DataFrame(material_monitor["supplier_batches"])
+    material_metrics = st.columns(5)
+    material_metrics[0].metric(
+        "Recorded incoming batches", f"{material_monitor['batch_count']:,}"
+    )
+    material_metrics[1].metric(
+        "Latest recorded receipt", material_monitor["latest_recorded_batch_date"]
+    )
+    material_metrics[2].metric(
+        "Model high-risk batches", f"{material_monitor['high_risk_count']:,}"
+    )
+    material_metrics[3].metric(
+        "Recorded scrap parts", f"{material_monitor['recorded_scrap_count']:,}"
+    )
+    material_metrics[4].metric(
+        "Recorded chargebacks", f"${material_monitor['recorded_chargebacks_usd']:,.0f}"
+    )
+    st.info(material_monitor["supplier_availability_basis"])
 
-    prod_orders_list = data["prod_orders"]
-    order_labels = [f"[Catalog] {o['order_id']} | {o['line_id']} ({o['product_name'].split('(')[0].strip()})" for o in prod_orders_list]
-    
-    col_ord_sel, col_ord_stat = st.columns([1.5, 1])
-    with col_ord_sel:
-        selected_order_label = st.selectbox(
-            "Select Production Line or Production Order:",
-            order_labels,
-            key="prod_order_select"
+    st.subheader("Incoming material availability by supplier")
+    st.caption("Availability here means recorded incoming-batch volume; it is not warehouse stock on hand.")
+    if not supplier_batches.empty:
+        st.bar_chart(
+            supplier_batches.set_index("supplier_id")[["recorded_batch_count"]],
+            x_label="Supplier",
+            y_label="Recorded incoming batches",
+            color="#2563EB",
         )
-        selected_order_idx = order_labels.index(selected_order_label)
-        ord_data = prod_orders_list[selected_order_idx]
-
-    with col_ord_stat:
-        render_html(f"""
-        <div style="display: flex; justify-content: flex-end; align-items: center; height: 100%;">
-            <span class="{ord_data['status_badge']}" style="font-size: 0.9rem; padding: 6px 14px;">
-                {ord_data['status']}
-            </span>
-        </div>
-        """)
-
-    render_html(f"""
-    <div style="font-size: 0.88rem; color: #64748B; margin-top: 4px;">
-        [Tier 3] <strong>Facility:</strong> {ord_data['mfg_unit']} | <strong>Line:</strong> {ord_data['line_id']} | <strong>Product:</strong> {ord_data['product_name']}
-    </div>
-    """)
-
-    st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
-
-    # 5 PRODUCTION ORDER KPI CARDS
-    attainment_pct = (ord_data['actual_qty'] / ord_data['planned_qty']) * 100
-    p1, p2, p3, p4, p5 = st.columns(5)
-    with p1:
-        render_html(f'<div class="metric-card-white"><div class="metric-card-label">PLANNED QUANTITY</div><div class="metric-card-number" style="color: #64748B;">{ord_data["planned_qty"]:,}</div><div class="metric-card-target">Target Run</div><div class="metric-card-delta">Scheduled Batch Size</div></div>')
-    with p2:
-        render_html(f'<div class="metric-card-white"><div class="metric-card-label">ACTUAL COMPLETED</div><div class="metric-card-number" style="color: #2563EB;">{ord_data["actual_qty"]:,}</div><div class="metric-card-target">{attainment_pct:.1f}% Attainment</div><div class="metric-card-delta">Net Good Units Produced</div></div>')
-    with p3:
-        render_html(f'<div class="metric-card-white"><div class="metric-card-label">COMPLETION SCHEDULE</div><div class="metric-card-number" style="color: #DC2626; font-size: 1.5rem;">+{ord_data["delay_hrs"]} hrs</div><div class="metric-card-target">Planned: {ord_data["planned_completion"]}</div><div class="metric-card-delta" style="color: #DC2626;">Projected: {ord_data["actual_completion"]}</div></div>')
-    with p4:
-        render_html(f'<div class="metric-card-white"><div class="metric-card-label">REJECTION RATE</div><div class="metric-card-number" style="color: #DC2626; font-size: 1.5rem;">{ord_data["rejection_rate"].split("(")[0].strip()}</div><div class="metric-card-target">Tolerance: < 1.5%</div><div class="metric-card-delta" style="color: #DC2626;">{ord_data["rejection_rate"].split("(")[1].replace(")", "")}</div></div>')
-    with p5:
-        render_html(f'<div class="metric-card-white"><div class="metric-card-label">RAW MATERIAL FEED</div><div class="metric-card-number" style="color: #D97706; font-size: 1.25rem;">ALERT</div><div class="metric-card-target">Stock Health</div><div class="metric-card-delta" style="color: #D97706;">{ord_data["raw_mat_status"][:25]}...</div></div>')
-
-    st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
-
-    # VISUAL PRODUCTION ATTAINMENT PROGRESS
-    col_prog, col_bottle = st.columns([1.2, 1])
-    with col_prog:
-        render_html("""
-        <div class="smart-card">
-            <div class="card-title"> Production Output Attainment</div>
-        </div>
-        """)
-        
-        scrap_units = int(ord_data["planned_qty"] * float(ord_data["rejection_rate"].split("%")[0]) / 100)
-        remaining_units = max(0, ord_data["planned_qty"] - ord_data["actual_qty"])
-
-        fig_prog = go.Figure()
-        fig_prog.add_trace(go.Bar(
-            name='Good Completed',
-            y=['Units'],
-            x=[ord_data['actual_qty'] - scrap_units],
-            orientation='h',
-            marker=dict(color='#059669')
-        ))
-        fig_prog.add_trace(go.Bar(
-            name='Scrap / Rejected',
-            y=['Units'],
-            x=[scrap_units],
-            orientation='h',
-            marker=dict(color='#DC2626')
-        ))
-        fig_prog.add_trace(go.Bar(
-            name='Deficit Remaining',
-            y=['Units'],
-            x=[remaining_units],
-            orientation='h',
-            marker=dict(color='#E2E8F0')
-        ))
-        fig_prog.update_layout(
-            barmode='stack',
-            height=140,
-            margin=dict(l=10, r=10, t=10, b=10),
-            xaxis=dict(title="Quantity (Parts)", range=[0, ord_data['planned_qty'] * 1.05]),
-            yaxis=dict(showticklabels=False),
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        st.dataframe(
+            supplier_batches.rename(
+                columns={
+                    "supplier_id": "Supplier",
+                    "recorded_batch_count": "Recorded incoming batches",
+                    "high_risk_batch_count": "Model high-risk batches",
+                    "out_of_spec_batch_count": "Out-of-spec batches",
+                    "mean_predicted_risk_pct": "Mean predicted quality risk (%)",
+                    "recorded_chargebacks_usd": "Recorded chargebacks (USD)",
+                }
+            ).style.apply(
+                _risk_probability_styles,
+                subset=["Mean predicted quality risk (%)"],
+            ).format({
+                "Mean predicted quality risk (%)": "{:.1f}%",
+                "Recorded chargebacks (USD)": "${:,.2f}",
+            }),
+            width="stretch",
+            hide_index=True,
         )
-        st.plotly_chart(fig_prog, use_container_width=True)
-        render_html(f"""
-            <div style="font-size: 0.85rem; color: #475569;">
-                Planned: <strong>{ord_data['planned_qty']:,}</strong> | Actual Good: <strong>{ord_data['actual_qty'] - scrap_units:,}</strong> | Scrapped: <strong>{scrap_units}</strong> | Behind Target: <strong>{remaining_units}</strong>
-            </div>
-        """)
 
-    with col_bottle:
-        render_html(f"""
-        <div class="smart-card" style="border-left: 4px solid #DC2626;">
-            <div class="card-title">[Warning] Identified Production Issues & Bottlenecks</div>
-            <div style="font-size: 0.88rem; color: #1E293B; line-height: 1.6;">
-                * <strong>Line Choke Point:</strong> {ord_data['bottlenecks']}<br>
-                * <strong>Raw Material Status:</strong> {ord_data['raw_mat_status']}<br>
-                * <strong>Order Schedule Drift:</strong> Running <strong>{ord_data['delay_hrs']} hours behind</strong> shift target schedule.
-            </div>
-        </div>
-        """)
+    st.subheader("Incoming inspection and quality")
+    inspection_cols = st.columns(4)
+    inspection_cols[0].metric(
+        "Out-of-spec hardness batches",
+        f"{summary['out_of_spec_hardness_batches']:,}",
+    )
+    inspection_cols[1].metric(
+        "Recorded marginal-high lots",
+        f"{summary['marginal_high_recorded_batches']:,}",
+    )
+    inspection_cols[2].metric(
+        "Recorded marginal-low lots",
+        f"{summary['marginal_low_recorded_batches']:,}",
+    )
+    inspection_cols[3].metric(
+        "Recorded normal lots",
+        f"{summary['normal_recorded_batches']:,}",
+    )
 
-    # INDIVIDUAL PRODUCT / PRODUCTION ORDER RECOMMENDATIONS
-    render_html(f"""
-    <div class="smart-card">
-        <div class="card-title">[Summary] AI-Powered Recommendations for {ord_data['order_id']} ({ord_data['product_name']})</div>
-        <p style="font-size: 0.9rem; color: #64748B; margin-bottom: 14px;">
-            Targeted operational directives across 4 core manufacturing levers:
-        </p>
-    </div>
-    """)
+    st.subheader("Live batch evaluation")
+    st.caption("Calls POST /api/tier2/evaluate_material: Random Forest, Gradient Boosting, and rule-based compensation.")
+    with st.form("material_model_inference"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            batch_id = st.text_input("Batch ID", value="INBOUND-BATCH")
+            supplier_id = st.selectbox("Supplier", ("VENDOR_A", "VENDOR_B", "VENDOR_C"), index=1)
+            batch_size = st.number_input("Batch size (units)", min_value=1, value=1200, step=100)
+        with col2:
+            hardness = st.number_input("Hardness (HV)", min_value=100.0, max_value=400.0, value=222.0)
+            tensile = st.number_input("Tensile strength (MPa)", min_value=200.0, max_value=1500.0, value=660.0)
+        with col3:
+            lower_limit = st.number_input("Lower specification limit (HV)", min_value=0.0, value=180.0)
+            upper_limit = st.number_input("Upper specification limit (HV)", min_value=0.1, value=230.0)
+        submit = st.form_submit_button("Evaluate batch")
 
-    r1, r2 = st.columns(2)
-    with r1:
-        render_html(f"""
-        <div class="issue-card" style="border-left: 4px solid #DC2626;">
-            <div style="font-weight: 800; font-size: 0.92rem; color: #991B1B; margin-bottom: 4px;">
-                1. Prioritizing Urgent Orders:
-            </div>
-            <div style="font-size: 0.88rem; color: #1E293B; line-height: 1.6;">
-                {ord_data['recommendations']['prioritizing_urgent_orders']}
-            </div>
-        </div>
+    if submit:
+        if lower_limit >= upper_limit:
+            st.error("The lower specification limit must be less than the upper specification limit.")
+        else:
+            try:
+                result = _evaluate_material_batch(
+                    supplier_id,
+                    hardness,
+                    tensile,
+                    int(batch_size),
+                    lower_limit,
+                    upper_limit,
+                )
+                st.subheader(f"Evaluation for {batch_id}")
+                st.write("Random Forest batch-risk prediction")
+                st.json(result["risk_evaluation"])
+                st.write("Gradient Boosting downstream forecast")
+                st.json(result["downstream_forecast"])
+                st.write("Adaptive recipe compensation (rules, not ML)")
+                st.json(result["adaptive_compensation"])
+            except Exception as exc:
+                st.error(_api_error_message(exc))
 
-        <div class="issue-card" style="border-left: 4px solid #2563EB;">
-            <div style="font-weight: 800; font-size: 0.92rem; color: #1E40AF; margin-bottom: 4px;">
-                2. Reallocating Production Capacity:
-            </div>
-            <div style="font-size: 0.88rem; color: #1E293B; line-height: 1.6;">
-                {ord_data['recommendations']['reallocating_capacity']}
-            </div>
-        </div>
-        """)
+    st.subheader("Historical incoming batches scored by the Random Forest")
+    scored = pd.DataFrame(material_monitor["materials"])
+    st.caption(
+        "Color indicates model-predicted batch quality risk (green low, amber medium, red high). "
+        "Cost is recorded supplier chargeback, not purchase or carrying cost."
+    )
+    display = scored[
+            [
+                "material_batch_id",
+                "supplier_id",
+                "material_hardness_hv",
+                "tensile_strength_mpa",
+                "material_risk_status",
+                "model_risk_tier",
+                "model_risk_probability",
+                "scrap_count",
+                "chargeback_amount_usd",
+            ]
+        ].rename(
+            columns={
+                "material_batch_id": "Batch ID",
+                "supplier_id": "Supplier",
+                "material_hardness_hv": "Hardness (HV)",
+                "tensile_strength_mpa": "Tensile (MPa)",
+                "material_risk_status": "Recorded QC status",
+                "model_risk_tier": "Predicted tier",
+                "model_risk_probability": "Predicted quality risk (%)",
+                "scrap_count": "Recorded scrap",
+                "chargeback_amount_usd": "Recorded chargeback (USD)",
+            }
+        )
+    display["Predicted quality risk (%)"] *= 100
+    st.dataframe(
+        display.style.apply(
+            _risk_probability_styles,
+            subset=["Predicted quality risk (%)"],
+        ).format({
+            "Predicted quality risk (%)": "{:.1f}%",
+            "Recorded chargeback (USD)": "${:,.2f}",
+        }),
+        width="stretch",
+        hide_index=True,
+    )
 
-    with r2:
-        render_html(f"""
-        <div class="issue-card" style="border-left: 4px solid #D97706;">
-            <div style="font-weight: 800; font-size: 0.92rem; color: #B45309; margin-bottom: 4px;">
-                3. Resolving Line Bottlenecks:
-            </div>
-            <div style="font-size: 0.88rem; color: #1E293B; line-height: 1.6;">
-                {ord_data['recommendations']['resolving_bottlenecks']}
-            </div>
-        </div>
 
-        <div class="issue-card" style="border-left: 4px solid #059669;">
-            <div style="font-weight: 800; font-size: 0.92rem; color: #065F46; margin-bottom: 4px;">
-                4. Replenishing Materials:
-            </div>
-            <div style="font-size: 0.88rem; color: #1E293B; line-height: 1.6;">
-                {ord_data['recommendations']['replenishing_materials']}
-            </div>
-        </div>
-        """)
+def _render_manufacturing_tab(models):
+    st.header("Manufacturing: Stations and Machines")
+    try:
+        monitoring = _api_get("/api/tier1/operations/monitor")
+    except Exception as exc:
+        st.error(_api_error_message(exc))
+        return
+    st.caption(f"Recorded manufacturing monitor as of {monitoring['as_of_date']}.")
+    summary = monitoring["summary"]
+    kpis = st.columns(5)
+    kpis[0].metric("Recorded output", f"{summary['total_units_produced']:,} units")
+    kpis[1].metric("Production-log defect rate", f"{summary['logged_defect_rate_pct']:.2f}%")
+    kpis[2].metric("Inspection rejection rate", f"{summary['inspection_rejection_rate_pct']:.2f}%")
+    kpis[3].metric("Estimated faulted time", f"{summary['estimated_faulted_hours']:.2f} h")
+    kpis[4].metric("Faulted telemetry samples", f"{summary['faulted_telemetry_samples']:,}")
+    st.info(monitoring["data_basis"])
+    shift_station_frame = pd.DataFrame(monitoring["stations"])
+    station_frame = shift_station_frame.groupby("station_id", as_index=False).agg(
+        units_produced=("units_produced", "sum"),
+        defect_count=("defect_count", "sum"),
+        inspected_parts=("inspected_parts", "sum"),
+        rejected_parts=("rejected_parts", "sum"),
+        telemetry_samples=("telemetry_samples", "sum"),
+        running_samples=("running_samples", "sum"),
+        faulted_samples=("faulted_samples", "sum"),
+        estimated_faulted_hours=("estimated_faulted_hours", "sum"),
+        mean_spindle_temp_c=("mean_spindle_temp_c", "mean"),
+        mean_system_pressure_psi=("mean_system_pressure_psi", "mean"),
+        mean_vibration_rms_g=("mean_vibration_rms_g", "mean"),
+    )
+    station_frame["defect_rate_pct"] = (
+        station_frame["defect_count"] / station_frame["units_produced"].replace(0, np.nan) * 100
+    ).fillna(0)
+    station_frame["inspection_rejection_rate_pct"] = (
+        station_frame["rejected_parts"]
+        / station_frame["inspected_parts"].replace(0, np.nan)
+        * 100
+    ).fillna(0)
+    station_frame["running_telemetry_pct"] = (
+        station_frame["running_samples"]
+        / station_frame["telemetry_samples"].replace(0, np.nan)
+        * 100
+    ).fillna(0)
+    station_failure_modes = {}
+    station_supplier_issues = {}
+    for row in shift_station_frame.itertuples(index=False):
+        counts = station_failure_modes.setdefault(row.station_id, {})
+        for mode in row.top_ml_failure_modes:
+            label = mode["predicted_failure_mode"]
+            counts[label] = counts.get(label, 0) + mode["predicted_cycle_count"]
+        suppliers = station_supplier_issues.setdefault(row.station_id, {})
+        for issue in row.top_supplier_issues:
+            supplier = issue["supplier_id"]
+            aggregate = suppliers.setdefault(
+                supplier,
+                {
+                    "supplier_id": supplier,
+                    "inspected_parts": 0,
+                    "rejected_parts": 0,
+                    "parts_from_marginal_high_batches": 0,
+                    "hardness_sum": 0.0,
+                    "hardness_count": 0,
+                },
+            )
+            aggregate["inspected_parts"] += issue["supplier_inspected_parts"]
+            aggregate["rejected_parts"] += issue["supplier_rejected_parts"]
+            aggregate["parts_from_marginal_high_batches"] += issue[
+                "parts_from_marginal_high_batches"
+            ]
+            aggregate["hardness_sum"] += (
+                issue["average_hardness_hv"] * issue["supplier_inspected_parts"]
+            )
+            aggregate["hardness_count"] += issue["supplier_inspected_parts"]
+    station_frame["top_ml_failure_modes"] = station_frame["station_id"].map(
+        lambda station_id: [
+            {"predicted_failure_mode": mode, "predicted_cycle_count": count}
+            for mode, count in sorted(
+                station_failure_modes.get(station_id, {}).items(),
+                key=lambda item: item[1],
+                reverse=True,
+            )[:3]
+        ]
+    )
+    def supplier_issue_summary(station_id):
+        issues = station_supplier_issues.get(station_id, {}).values()
+        ranked = sorted(issues, key=lambda item: item["rejected_parts"], reverse=True)[:3]
+        for issue in ranked:
+            issue["rejection_rate_pct"] = (
+                issue["rejected_parts"] / max(1, issue["inspected_parts"]) * 100
+            )
+            issue["average_hardness_hv"] = (
+                issue["hardness_sum"] / max(1, issue["hardness_count"])
+            )
+            issue.pop("hardness_sum")
+            issue.pop("hardness_count")
+        return ranked
 
+    station_frame["top_supplier_issues"] = station_frame["station_id"].map(
+        supplier_issue_summary
+    )
+    st.subheader("Machine, quality, and supplier-linked station monitor")
+    chart = px.bar(
+        station_frame,
+        x="station_id",
+        y="estimated_faulted_hours",
+        color="inspection_rejection_rate_pct",
+        color_continuous_scale=["#34D399", "#FBBF24", "#EF4444"],
+        hover_data=[
+            "running_telemetry_pct",
+            "units_produced",
+            "defect_rate_pct",
+            "inspection_rejection_rate_pct",
+            "mean_spindle_temp_c",
+            "mean_vibration_rms_g",
+        ],
+        labels={
+            "station_id": "Station",
+            "estimated_faulted_hours": "Estimated faulted hours",
+            "inspection_rejection_rate_pct": "Inspection rejection (%)",
+        },
+        title="Estimated machine fault time by station; color shows inspection rejection",
+    )
+    st.plotly_chart(chart, width="stretch")
+    st.dataframe(
+        station_frame[
+            [
+                "station_id",
+                "units_produced",
+                "defect_count",
+                "defect_rate_pct",
+                "inspected_parts",
+                "rejected_parts",
+                "inspection_rejection_rate_pct",
+                "running_telemetry_pct",
+                "estimated_faulted_hours",
+                "mean_spindle_temp_c",
+                "mean_system_pressure_psi",
+                "mean_vibration_rms_g",
+                "top_ml_failure_modes",
+                "top_supplier_issues",
+            ]
+        ].assign(
+            top_ml_failure_modes=lambda frame: frame["top_ml_failure_modes"].apply(
+                lambda modes: ", ".join(
+                    f"{mode['predicted_failure_mode']} ({mode['predicted_cycle_count']})"
+                    for mode in modes
+                )
+            ),
+            top_supplier_issues=lambda frame: frame["top_supplier_issues"].apply(
+                lambda issues: ", ".join(
+                    f"{issue['supplier_id']} ({issue['rejected_parts']} rejects)"
+                    for issue in issues
+                )
+            ),
+        ).rename(
+            columns={
+                "station_id": "Station",
+                "units_produced": "Recorded output",
+                "defect_count": "Logged defects",
+                "defect_rate_pct": "Production-log defect rate (%)",
+                "inspected_parts": "Inspected parts",
+                "rejected_parts": "Rejected parts",
+                "inspection_rejection_rate_pct": "Inspection rejection (%)",
+                "running_telemetry_pct": "Running telemetry (%)",
+                "estimated_faulted_hours": "Estimated faulted hours",
+                "mean_spindle_temp_c": "Mean temperature (°C)",
+                "mean_system_pressure_psi": "Mean pressure (psi)",
+                "mean_vibration_rms_g": "Mean vibration (g)",
+                "top_ml_failure_modes": "Top LightGBM predicted modes",
+                "top_supplier_issues": "Top supplier-linked issues",
+            }
+        ).style.apply(
+            _risk_probability_styles,
+            subset=["Inspection rejection (%)"],
+        ).format({
+            "Production-log defect rate (%)": "{:.2f}%",
+            "Inspection rejection (%)": "{:.2f}%",
+            "Running telemetry (%)": "{:.1f}%",
+            "Estimated faulted hours": "{:.2f}",
+        }),
+        width="stretch",
+        hide_index=True,
+    )
+    st.subheader("Live station diagnosis")
+    st.caption("Calls POST /api/tier1/simulate for LightGBM + SHAP and the rule-based action engine.")
+    with st.form("station_model_inference"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            station_id = st.selectbox("Station", ("ST-10", "ST-20", "ST-30", "ST-40"))
+            temp = st.number_input("Spindle temperature (°C)", value=62.0)
+            pressure = st.number_input("System pressure (psi)", value=115.0)
+            vibration = st.number_input("Vibration RMS (g)", value=2.1)
+        with col2:
+            wear = st.number_input("Tool wear index", value=55.0)
+            service_hours = st.number_input("Hours since service", value=18.0)
+            torque = st.number_input("Peak torque (Nm)", value=13.2)
+            angle = st.number_input("Shutoff angle (degrees)", value=285.0)
+        with col3:
+            torque_status = st.selectbox("Torque status", ("OK", "NOK_HIGH", "NOK_LOW"), index=1)
+            hardness = st.number_input("Material hardness (HV)", value=220.0)
+            tensile = st.number_input("Tensile strength (MPa)", value=645.0)
+        submit = st.form_submit_button("Predict failure mode and prescribe action")
+
+    if submit:
+        telemetry = {
+            "spindle_temp_c": temp,
+            "system_pressure_psi": pressure,
+            "vibration_rms_g": vibration,
+            "tool_wear_index": wear,
+            "hours_since_service": service_hours,
+            "peak_torque_nm": torque,
+            "shutoff_angle_deg": angle,
+            "torque_status": torque_status,
+            "material_hardness_hv": hardness,
+            "tensile_strength_mpa": tensile,
+        }
+        try:
+            result = _api_post("/api/tier1/simulate", {
+                "station_id": station_id,
+                **telemetry,
+            })
+            left, right = st.columns(2)
+            left.metric("Predicted failure mode", result["predicted_failure_mode"])
+            right.metric("Model confidence", f"{result['confidence']:.1%}")
+            st.write("Top SHAP contributors")
+            st.dataframe(
+                pd.DataFrame(result["top_physical_contributors"]),
+                width="stretch",
+                hide_index=True,
+            )
+            st.write("Prescriptive action (rule-based engine)")
+            st.json(result["prescriptive_action"])
+        except Exception as exc:
+            st.error(_api_error_message(exc))
+
+
+def _render_production_tab(models):
+    try:
+        monitoring = _api_get("/api/tier1/operations/monitor")
+        production_summary = _api_get("/api/tier1/production/summary")
+    except Exception as exc:
+        st.error(_api_error_message(exc))
+        return
+
+    st.header("Production: Shifts and Lines")
+    st.caption(
+        f"Recorded production history through {monitoring['as_of_date']}. Enter a planned shift "
+        "target below to compare against the latest recorded shift and get an ML defect-risk forecast."
+    )
+    station_frame = pd.DataFrame(monitoring["stations"])
+    shifts = sorted(station_frame["shift_id"].dropna().unique())
+    selected_shift = st.selectbox("Shift to review", shifts, key="production_shift_review")
+    selected = station_frame[station_frame["shift_id"] == selected_shift].copy()
+    actual_units = int(selected["units_produced"].sum())
+    actual_defects = int(selected["defect_count"].sum())
+    actual_inspected = int(selected["inspected_parts"].sum())
+    actual_rejected = int(selected["rejected_parts"].sum())
+    shift_kpis = st.columns(5)
+    shift_kpis[0].metric("Recorded output", f"{actual_units:,} units")
+    shift_kpis[1].metric("Logged defects", f"{actual_defects:,}")
+    shift_kpis[2].metric(
+        "Production-log defect rate",
+        f"{actual_defects / max(1, actual_units) * 100:.2f}%",
+    )
+    shift_kpis[3].metric("Inspection rejects", f"{actual_rejected:,} / {actual_inspected:,}")
+    shift_kpis[4].metric(
+        "Inspection rejection rate",
+        f"{actual_rejected / max(1, actual_inspected) * 100:.2f}%",
+    )
+    st.caption(
+        f"All-period production summary: {production_summary['total_units_produced']:,} units, "
+        f"{production_summary['total_defects']:,} logged defects, "
+        f"{production_summary['defect_rate_pct']:.2f}% production-log defect rate."
+    )
+    st.subheader("Output and downtime by station")
+    prod_chart = px.bar(
+        selected,
+        x="station_id",
+        y="units_produced",
+        color="estimated_faulted_hours",
+        color_continuous_scale=["#34D399", "#FBBF24", "#EF4444"],
+        hover_data=[
+            "defect_count",
+            "defect_rate_pct",
+            "inspection_rejection_rate_pct",
+            "estimated_faulted_hours",
+            "running_telemetry_pct",
+        ],
+        labels={
+            "station_id": "Station",
+            "units_produced": "Recorded output (units)",
+            "estimated_faulted_hours": "Estimated faulted hours",
+        },
+        title=f"{selected_shift}: recorded output; color shows estimated faulted hours",
+    )
+    st.plotly_chart(prod_chart, width="stretch")
+    st.dataframe(
+        selected[
+            [
+                "station_id",
+                "units_produced",
+                "defect_count",
+                "defect_rate_pct",
+                "inspected_parts",
+                "rejected_parts",
+                "inspection_rejection_rate_pct",
+                "estimated_faulted_hours",
+            ]
+        ].rename(
+            columns={
+                "station_id": "Station",
+                "units_produced": "Recorded output",
+                "defect_count": "Logged defects",
+                "defect_rate_pct": "Production-log defect rate (%)",
+                "inspected_parts": "Inspected parts",
+                "rejected_parts": "Rejected parts",
+                "inspection_rejection_rate_pct": "Inspection rejection (%)",
+                "estimated_faulted_hours": "Estimated faulted hours",
+            }
+        ).style.apply(
+            _risk_probability_styles,
+            subset=["Inspection rejection (%)"],
+        ).format({
+            "Production-log defect rate (%)": "{:.2f}%",
+            "Inspection rejection (%)": "{:.2f}%",
+            "Estimated faulted hours": "{:.2f}",
+        }),
+        width="stretch",
+        hide_index=True,
+    )
+    st.subheader("Production target and next-shift defect forecast")
+    st.caption("Calls POST /api/tier1/predict_shift for the trained Poisson LightGBM model.")
+    with st.form("shift_model_inference"):
+        top1, top2, top3 = st.columns(3)
+        with top1:
+            shift_id = st.selectbox("Forecast shift", ("SHIFT_1", "SHIFT_2", "SHIFT_3"))
+            planned_units = st.number_input(
+                "Planned target per station (units)",
+                min_value=0.0,
+                value=float(max(1, int(selected["units_produced"].mean()))),
+                step=50.0,
+            )
+        with top2:
+            line_speed = st.number_input("Line speed (units/min)", min_value=0.0, value=47.2)
+            speed_variation = st.number_input("Line speed standard deviation", min_value=0.0, value=1.8)
+        with top3:
+            operator_tenure = st.number_input("Operator tenure (years)", min_value=0.0, value=5.0)
+
+        station_rows = []
+        station_columns = st.columns(4)
+        for index, station_id in enumerate(("ST-10", "ST-20", "ST-30", "ST-40")):
+            with station_columns[index]:
+                st.markdown(f"**{station_id} telemetry**")
+                station_rows.append({
+                    "station_id": station_id,
+                    "operator_tenure_yrs": operator_tenure,
+                    "spindle_temp_c": st.number_input("Temperature (°C)", value=58.0, key=f"shift_temp_{station_id}"),
+                    "max_spindle_temp_c": st.number_input("Peak temperature (°C)", value=62.0, key=f"shift_peak_temp_{station_id}"),
+                    "vibration_rms_g": st.number_input("Vibration (g)", value=1.8, key=f"shift_vibration_{station_id}"),
+                    "max_vibration_rms_g": st.number_input("Peak vibration (g)", value=2.1, key=f"shift_peak_vibration_{station_id}"),
+                    "system_pressure_psi": st.number_input("Pressure (psi)", value=115.0, key=f"shift_pressure_{station_id}"),
+                    "tool_wear_index": st.number_input("Tool wear", value=55.0, key=f"shift_wear_{station_id}"),
+                    "max_tool_wear_index": st.number_input("Peak tool wear", value=58.0, key=f"shift_peak_wear_{station_id}"),
+                    "peak_torque_nm": st.number_input("Peak torque (Nm)", value=12.5, key=f"shift_torque_{station_id}"),
+                    "std_peak_torque_nm": st.number_input("Torque standard deviation", value=0.2, key=f"shift_torque_std_{station_id}"),
+                    "shutoff_angle_deg": st.number_input("Shutoff angle (degrees)", value=360.0, key=f"shift_angle_{station_id}"),
+                })
+        submit = st.form_submit_button("Predict shift defects and rank stations")
+
+    if submit:
+        try:
+            result = _api_post("/api/tier1/predict_shift", {
+                "shift_id": shift_id,
+                "planned_units": planned_units,
+                "line_speed_upm": line_speed,
+                "std_line_speed_upm": speed_variation,
+                "stations": station_rows,
+            })
+            target_cols = st.columns(3)
+            forecast_shift_actual = int(
+                station_frame.loc[station_frame["shift_id"] == shift_id, "units_produced"].sum()
+            )
+            target_total = planned_units * len(station_rows)
+            predicted_defects = sum(
+                entry["predicted_defect_count"]
+                for entry in result["station_risk_ranking"]
+            )
+            target_cols[0].metric("Planned line target", f"{target_total:,.0f} units")
+            target_cols[1].metric(
+                "Forecast-shift recorded output", f"{forecast_shift_actual:,} units"
+            )
+            target_cols[2].metric(
+                "Historical target attainment",
+                f"{forecast_shift_actual / target_total:.1%}" if target_total else "Target is zero",
+            )
+            st.caption(
+                f"Poisson LightGBM predicted approximately {predicted_defects:.1f} defects across "
+                "the four stations. Target attainment compares your target with this recorded "
+                "historical shift; the target is not a stored work-order plan."
+            )
+            ranking = pd.DataFrame(result["station_risk_ranking"])
+            st.dataframe(
+                ranking.style.apply(
+                    _risk_probability_styles, subset=["predicted_defect_count"]
+                ),
+                width="stretch",
+                hide_index=True,
+            )
+        except Exception as exc:
+            st.error(_api_error_message(exc))
+
+
+def main():
+    st.set_page_config(
+        page_title="Manufacturing Quality Intelligence",
+        page_icon="🏭",
+        layout="wide",
+    )
+    st.title("Manufacturing Quality Intelligence")
+    st.caption("Color-coded operations monitoring powered by trained ML inference and project API endpoints.")
+    st.markdown(
+        """
+        <style>
+        .stApp { background: #F7FAFF; color: #172033; }
+        [data-testid="stMetricValue"] { font-size: 1.35rem !important; }
+        [data-testid="stMetricLabel"] { font-size: 0.78rem !important; }
+        [data-testid="stCaptionContainer"] { font-size: 0.82rem !important; }
+        [data-testid="stDataFrame"] { font-size: 0.82rem !important; }
+        div[data-testid="stMetric"] {
+            background: linear-gradient(135deg, #FFFFFF 0%, #EFF6FF 100%);
+            border: 1px solid #DBEAFE;
+            border-radius: 0.65rem;
+            padding: 0.65rem 0.8rem;
+        }
+        h1, h2, h3 { color: #1D4ED8 !important; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.sidebar.caption(f"Manufacturing API: {API_BASE_URL}")
+    try:
+        api_health = _api_get("/health")
+        if api_health["status"] == "healthy":
+            st.sidebar.success("API connected; all models are ready.")
+        else:
+            st.sidebar.error(
+                f"API status: {api_health['status']}; unavailable models: "
+                f"{', '.join(api_health.get('models_missing', [])) or 'see API health'}"
+            )
+    except Exception as exc:
+        st.sidebar.error(_api_error_message(exc))
+    models = _models()
+    if not models:
+        st.stop()
+
+    required = {
+        "trend_analyzer",
+        "trace_engine",
+        "gap_analyzer",
+        "scar_generator",
+        "marginal_batch_classifier",
+        "downstream_impact_forecaster",
+        "adaptive_parameter_compensator",
+        "failure_mode_classifier",
+        "prescriptive_action_engine",
+        "shift_defect_predictor",
+    }
+    missing = sorted(required.difference(models))
+    if missing:
+        st.error(f"Required models or engines are unavailable: {', '.join(missing)}")
+        st.stop()
+
+    try:
+        data = load_dashboard_data()
+    except Exception as exc:
+        st.error(f"Could not load dashboard source data: {type(exc).__name__}: {exc}")
+        st.stop()
+
+    supplier_tab, material_tab, manufacturing_tab, production_tab = st.tabs(
+        ["Supplier / Vendor", "Raw Material", "Manufacturing", "Production"]
+    )
+    with supplier_tab:
+        _render_supplier_tab(models, data)
+    with material_tab:
+        _render_material_tab(models, data)
+    with manufacturing_tab:
+        _render_manufacturing_tab(models)
+    with production_tab:
+        _render_production_tab(models)
+
+
+if __name__ == "__main__":
+    main()

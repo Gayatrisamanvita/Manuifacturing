@@ -38,7 +38,14 @@ class SupplierQualityTrendAnalyzer:
 
             # Defect rate trend
             recent_rates = supp_hist["historical_defect_rate_pct"].tolist()
-            trend_direction = "INCREASING" if len(recent_rates) > 1 and recent_rates[-1] > recent_rates[0] else "DECREASING"
+            if len(recent_rates) < 2:
+                trend_direction = "INSUFFICIENT_DATA"
+            elif recent_rates[-1] > recent_rates[0]:
+                trend_direction = "INCREASING"
+            elif recent_rates[-1] < recent_rates[0]:
+                trend_direction = "DECREASING"
+            else:
+                trend_direction = "STABLE"
 
             # Recurring failure modes
             mode_counts = supp_hist["recurring_failure_mode"].value_counts().to_dict()
@@ -56,9 +63,12 @@ class SupplierQualityTrendAnalyzer:
             supplier_profiles[supplier] = {
                 "supplier_id": supplier,
                 "current_defect_rate_pct": recent_rates[-1] if recent_rates else 0.0,
+                "latest_recorded_defect_rate_pct": recent_rates[-1] if recent_rates else 0.0,
                 "historical_trend": trend_direction,
                 "defect_rate_series": recent_rates,
                 "snapshot_dates": supp_hist["snapshot_date"].tolist(),
+                "data_as_of": str(supp_hist["snapshot_date"].max()) if not supp_hist.empty else None,
+                "trend_basis": "FIRST_TO_LAST_AVAILABLE_SNAPSHOT",
                 "top_recurring_failure_modes": mode_counts,
                 "total_capa_recurrence_count": total_capas,
                 "batch_counts": {
@@ -143,13 +153,15 @@ class WarrantyTraceabilityEngine:
     def trace_batch(self, batch_id: str) -> Dict[str, Any]:
         df = self.load_trace_data()
         claims = df[df["material_batch_id"] == batch_id]
+        batch_master = pd.read_csv(os.path.join(self.data_dir, "material_batch_master.csv"))
+        batch = batch_master[batch_master["material_batch_id"] == batch_id]
         return {
             "material_batch_id": batch_id,
             "total_warranty_claims": len(claims),
             "total_claim_cost_usd": round(float(claims["claim_cost_usd"].sum()), 2),
             "affected_serial_numbers": claims["part_serial_no"].head(10).tolist(),
-            "supplier_id": claims["supplier_id"].iloc[0] if not claims.empty else "UNKNOWN",
-            "material_risk_status": claims["material_risk_status"].iloc[0] if not claims.empty else "UNKNOWN"
+            "supplier_id": batch["supplier_id"].iloc[0] if not batch.empty else "UNKNOWN",
+            "material_risk_status": batch["material_risk_status"].iloc[0] if not batch.empty else "UNKNOWN"
         }
 
 

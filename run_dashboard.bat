@@ -8,5 +8,5 @@ if exist "venv\Scripts\activate.bat" (
     call venv\Scripts\activate.bat
 )
 
-streamlit run streamlit_app.py
+streamlit run streamlit_app.py --server.address 0.0.0.0 --server.port 8000
 pause
