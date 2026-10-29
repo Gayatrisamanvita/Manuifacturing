@@ -1,0 +1,16 @@
+{
+  "name": "FactorySmart AI Intelligence Suite",
+  "forwardPorts": [8501, 8000],
+  "portsAttributes": {
+    "8501": {
+      "label": "Streamlit Quality Dashboard",
+      "onAutoForward": "openBrowser",
+      "visibility": "public"
+    },
+    "8000": {
+      "label": "FastAPI Backend Server",
+      "onAutoForward": "silent",
+      "visibility": "public"
+    }
+  }
+}

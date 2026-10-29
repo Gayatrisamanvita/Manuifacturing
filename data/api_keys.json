@@ -11,8 +11,8 @@
       ],
       "status": "ACTIVE",
       "created_at": "2026-10-26T05:30:00Z",
-      "last_used_at": "2026-10-27T09:16:00.133013Z",
-      "request_count": 3
+      "last_used_at": "2026-10-28T18:32:26.401270Z",
+      "request_count": 5
     },
     {
       "key_id": "key_vendor_a",
@@ -47,8 +47,8 @@
       ],
       "status": "ACTIVE",
       "created_at": "2026-10-26T05:30:00Z",
-      "last_used_at": "2026-10-27T09:16:00.126558Z",
-      "request_count": 10
+      "last_used_at": "2026-10-28T18:32:26.396056Z",
+      "request_count": 16
     },
     {
       "key_id": "key_vendor_c",
@@ -83,8 +83,8 @@
       ],
       "status": "ACTIVE",
       "created_at": "2026-10-26T05:30:00Z",
-      "last_used_at": "2026-10-27T09:15:58.032589Z",
-      "request_count": 2
+      "last_used_at": "2026-10-28T18:32:23.534168Z",
+      "request_count": 4
     },
     {
       "key_id": "key_e260c6fc",
@@ -135,6 +135,40 @@
       "last_used_at": null,
       "request_count": 0,
       "revoked_at": "2026-10-27T09:15:58.038333Z"
+    },
+    {
+      "key_id": "key_97c99cc0",
+      "key": "fs-key-vendor_t-5ccbe74f7afc",
+      "client_name": "Automated Test Quality Bot",
+      "supplier_id": "VENDOR_TEST",
+      "role": "partner",
+      "permissions": [
+        "evaluate_lot",
+        "forecast_impact",
+        "adaptive_recipe"
+      ],
+      "status": "REVOKED",
+      "created_at": "2026-10-28T05:51:24.078136Z",
+      "last_used_at": null,
+      "request_count": 0,
+      "revoked_at": "2026-10-28T05:51:24.080916Z"
+    },
+    {
+      "key_id": "key_5193ef1f",
+      "key": "fs-key-vendor_t-acfe720d9caf",
+      "client_name": "Automated Test Quality Bot",
+      "supplier_id": "VENDOR_TEST",
+      "role": "partner",
+      "permissions": [
+        "evaluate_lot",
+        "forecast_impact",
+        "adaptive_recipe"
+      ],
+      "status": "REVOKED",
+      "created_at": "2026-10-28T18:32:23.537821Z",
+      "last_used_at": null,
+      "request_count": 0,
+      "revoked_at": "2026-10-28T18:32:23.540582Z"
     }
   ]
 }

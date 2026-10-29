@@ -1,0 +1,19 @@
+{
+  "remote.portsAttributes": {
+    "8501": {
+      "label": "Streamlit Quality Dashboard",
+      "onAutoForward": "openBrowser",
+      "visibility": "public"
+    },
+    "8000": {
+      "label": "FastAPI Inference Backend",
+      "onAutoForward": "silent",
+      "visibility": "public"
+    },
+    "8001": {
+      "label": "Supplier Microservice",
+      "onAutoForward": "silent",
+      "visibility": "public"
+    }
+  }
+}
