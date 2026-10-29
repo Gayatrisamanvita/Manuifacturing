@@ -387,6 +387,66 @@ def verify_fastapi_endpoints(report: VerificationReport):
             else:
                 report.log_fail("API", "POST /api/v1/supplier/certify-lot", f"Status: {r.status_code}, Body: {r.text}")
 
+            recipe = client.post("/api/v1/supplier/adaptive-recipe", headers={
+                "X-API-Key": "fs-key-vendor-b-3e7a9d0f"
+            }, json={"material_hardness_hv": 224.5, "batch_tensile_mpa": 680.0})
+            if (
+                recipe.status_code == 200
+                and recipe.json()["target_torque_offset_nm"] > 0
+                and recipe.json()["shutoff_angle_offset_deg"] > 0
+                and recipe.json()["spindle_speed_reduction_pct"] > 0
+                and recipe.json()["engineering_justification"]
+            ):
+                report.log_pass("API", "Adaptive recipe response mapping", "Non-zero calculated offsets and engineering guidance returned")
+            else:
+                report.log_fail("API", "Adaptive recipe response mapping", f"Status: {recipe.status_code}, Body: {recipe.text}")
+
+            small_forecast = client.post("/api/v1/supplier/forecast-impact", headers={
+                "X-API-Key": "fs-key-vendor-b-3e7a9d0f"
+            }, json={
+                "material_hardness_hv": 224.0, "tensile_strength_mpa": 680.0,
+                "supplier_id": "VENDOR_B", "batch_size_units": 1000
+            })
+            large_forecast = client.post("/api/v1/supplier/forecast-impact", headers={
+                "X-API-Key": "fs-key-vendor-b-3e7a9d0f"
+            }, json={
+                "material_hardness_hv": 224.0, "tensile_strength_mpa": 680.0,
+                "supplier_id": "VENDOR_B", "batch_size_units": 2000
+            })
+            if (
+                small_forecast.status_code == large_forecast.status_code == 200
+                and large_forecast.json()["expected_scrap_count"] >= small_forecast.json()["expected_scrap_count"]
+                and large_forecast.json()["failure_mode_method"] == "HARDNESS_THRESHOLD_RULES"
+            ):
+                report.log_pass("API", "Batch-size-scaled downstream forecast", "Scrap forecast scales with requested units and identifies its rule-based failure mode")
+            else:
+                report.log_fail("API", "Batch-size-scaled downstream forecast", f"Small: {small_forecast.text}; Large: {large_forecast.text}")
+
+            invalid_spec = client.post("/api/v1/supplier/evaluate-lot", headers={
+                "X-API-Key": "fs-key-vendor-b-3e7a9d0f"
+            }, json={
+                "supplier_id": "VENDOR_B", "material_hardness_hv": 220.0,
+                "tensile_strength_mpa": 675.0, "lower_spec_limit": 230.0,
+                "upper_spec_limit": 180.0
+            })
+            if invalid_spec.status_code == 422:
+                report.log_pass("API", "Supplier specification validation", "Invalid lower/upper limits rejected with HTTP 422")
+            else:
+                report.log_fail("API", "Supplier specification validation", f"Expected 422 but received {invalid_spec.status_code}")
+
+            out_of_spec = client.post("/api/v1/supplier/certify-lot", headers={
+                "X-API-Key": "fs-key-vendor-b-3e7a9d0f"
+            }, json={
+                "supplier_id": "VENDOR_B", "batch_id": "OUT-OF-SPEC",
+                "material_hardness_hv": 250.0, "tensile_strength_mpa": 680.0,
+                "batch_size_units": 1000, "lower_spec_limit": 180.0,
+                "upper_spec_limit": 230.0
+            })
+            if out_of_spec.status_code == 200 and out_of_spec.json()["evaluation_verdict"] == "OUT_OF_SPEC_REJECT":
+                report.log_pass("API", "Out-of-spec comprehensive disposition", "Out-of-spec batch is rejected before leakage-zone disposition")
+            else:
+                report.log_fail("API", "Out-of-spec comprehensive disposition", f"Status: {out_of_spec.status_code}, Body: {out_of_spec.text}")
+
             # Admin Key management endpoints
             # Non-admin trying to list keys -> expect 403
             r = client.get("/api/v1/supplier/auth/keys", headers={"X-API-Key": "fs-key-vendor-b-3e7a9d0f"})

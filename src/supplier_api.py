@@ -22,10 +22,10 @@ import os
 import sys
 import json
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Literal, Optional
 import numpy as np
 import pandas as pd
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # Ensure project root in sys.path
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -124,11 +124,21 @@ def init_models(data_dir: str = "data"):
     forecaster = DownstreamImpactForecaster()
     forecaster_path = os.path.join(PROJECT_ROOT, "models", "downstream_impact_forecaster.pkl")
     if os.path.exists(forecaster_path):
-        forecaster.load(forecaster_path)
+        try:
+            forecaster.load(forecaster_path)
+        except Exception as exc:
+            print(f"[Supplier API] Could not load downstream forecaster ({exc}); retraining from source data.")
+            dl = DataLoader(data_dir=os.path.join(PROJECT_ROOT, data_dir))
+            forecaster.fit(dl.get_material_batch_summary())
+            forecaster.save(forecaster_path)
     else:
         dl = DataLoader(data_dir=os.path.join(PROJECT_ROOT, data_dir))
         batch_summary = dl.get_material_batch_summary()
         forecaster.fit(batch_summary)
+    if not forecaster.reference_batch_size:
+        dl = DataLoader(data_dir=os.path.join(PROJECT_ROOT, data_dir))
+        batch_summary = dl.get_material_batch_summary()
+        forecaster.reference_batch_size = float(batch_summary["total_parts"].mean())
     registry.impact_forecaster = forecaster
 
     compensator = AdaptiveParameterCompensator()
@@ -173,9 +183,15 @@ class LotEvaluationRequest(BaseModel):
     tensile_strength_mpa: float = Field(..., ge=200.0, le=1500.0, description="Ultimate Tensile Strength Rm (MPa)", example=675.0)
     lower_spec_limit: float = Field(180.0, description="Contractual Lower Specification Limit (HV)", example=180.0)
     upper_spec_limit: float = Field(230.0, description="Contractual Upper Specification Limit (HV)", example=230.0)
-    supplier_id: str = Field("VENDOR_B", description="Supplier identifier (e.g. VENDOR_A, VENDOR_B, VENDOR_C)", example="VENDOR_B")
+    supplier_id: Literal["VENDOR_A", "VENDOR_B", "VENDOR_C"] = Field("VENDOR_B", description="Supplier identifier (e.g. VENDOR_A, VENDOR_B, VENDOR_C)", example="VENDOR_B")
     batch_id: Optional[str] = Field("BATCH-INBOUND-001", description="Vendor heat/lot identifier", example="LOT-2026-X49")
     material_grade: Optional[str] = Field("AISI-4140", description="Alloy specification grade", example="AISI-4140")
+
+    @model_validator(mode="after")
+    def validate_spec_limits(self):
+        if self.lower_spec_limit >= self.upper_spec_limit:
+            raise ValueError("lower_spec_limit must be less than upper_spec_limit.")
+        return self
 
 class LotEvaluationResponse(BaseModel):
     batch_id: str
@@ -192,7 +208,7 @@ class LotEvaluationResponse(BaseModel):
 class DownstreamForecastRequest(BaseModel):
     material_hardness_hv: float = Field(..., example=224.0)
     tensile_strength_mpa: float = Field(..., example=680.0)
-    supplier_id: str = Field("VENDOR_B", example="VENDOR_B")
+    supplier_id: Literal["VENDOR_A", "VENDOR_B", "VENDOR_C"] = Field("VENDOR_B", example="VENDOR_B")
     batch_size_units: int = Field(5000, ge=1, description="Number of units in batch shipment", example=5000)
 
 class DownstreamForecastResponse(BaseModel):
@@ -201,6 +217,7 @@ class DownstreamForecastResponse(BaseModel):
     projected_scrap_rate_pct: float
     likely_downstream_failure_mode: str
     physical_root_cause: str
+    failure_mode_method: str
     projected_scrap_cost_usd: float
 
 class AdaptiveRecipeRequest(BaseModel):
@@ -218,14 +235,20 @@ class AdaptiveRecipeResponse(BaseModel):
     engineering_justification: str
 
 class ComprehensiveLotQCRequest(BaseModel):
-    supplier_id: str = Field("VENDOR_B", example="VENDOR_B")
+    supplier_id: Literal["VENDOR_A", "VENDOR_B", "VENDOR_C"] = Field("VENDOR_B", example="VENDOR_B")
     batch_id: str = Field("LOT-2026-B88", example="LOT-2026-B88")
     material_grade: str = Field("AISI-4140", example="AISI-4140")
     material_hardness_hv: float = Field(222.5, example=222.5)
     tensile_strength_mpa: float = Field(670.0, example=670.0)
-    batch_size_units: int = Field(8000, example=8000)
+    batch_size_units: int = Field(8000, ge=1, example=8000)
     lower_spec_limit: float = Field(180.0, example=180.0)
     upper_spec_limit: float = Field(230.0, example=230.0)
+
+    @model_validator(mode="after")
+    def validate_spec_limits(self):
+        if self.lower_spec_limit >= self.upper_spec_limit:
+            raise ValueError("lower_spec_limit must be less than upper_spec_limit.")
+        return self
 
 class ComprehensiveLotQCResponse(BaseModel):
     timestamp: str
@@ -238,11 +261,11 @@ class ComprehensiveLotQCResponse(BaseModel):
     actionable_shipping_advice: str
 
 class LeadTimePredictionRequest(BaseModel):
-    supplier_id: str = Field("VENDOR_B", example="VENDOR_B")
+    supplier_id: Literal["VENDOR_A", "VENDOR_B", "VENDOR_C"] = Field("VENDOR_B", example="VENDOR_B")
     sku: Optional[str] = Field("STL-2001", example="STL-2001")
     category: str = Field("Structural Alloy Steel", example="Structural Alloy Steel")
-    target_lead_days: int = Field(18, example=18)
-    monthly_vol_units: int = Field(18500, example=18500)
+    target_lead_days: int = Field(18, ge=1, example=18)
+    monthly_vol_units: int = Field(18500, ge=0, example=18500)
 
 class LeadTimePredictionResponse(BaseModel):
     supplier_id: str
@@ -254,6 +277,7 @@ class LeadTimePredictionResponse(BaseModel):
     delivery_status: str
     risk_classification: str
     recommended_procurement_action: str
+    estimation_method: str
 
 class SafetyStockRequest(BaseModel):
     daily_consumption_mean: float = Field(..., ge=1.0, example=350.0)
@@ -341,19 +365,24 @@ def who_am_i(client: Dict[str, Any] = Depends(get_current_client)):
 @supplier_router.get("/health", summary="Microservice Health & Model Readiness")
 def check_health():
     """Returns the operational readiness of all Supplier & Vendor ML engines (open health probe)."""
+    models_ready = {
+        "batch_risk_classifier": bool(
+            registry.batch_classifier and registry.batch_classifier.feature_names
+        ),
+        "downstream_impact_forecaster": bool(
+            registry.impact_forecaster and registry.impact_forecaster.features
+        ),
+        "adaptive_parameter_compensator": registry.adaptive_compensator is not None,
+        "trend_analyzer": registry.trend_analyzer is not None,
+        "warranty_trace_engine": registry.trace_engine is not None,
+        "tolerance_gap_analyzer": registry.gap_analyzer is not None,
+        "scar_generator": registry.scar_generator is not None,
+    }
     return {
-        "status": "HEALTHY",
+        "status": "HEALTHY" if all(models_ready.values()) else "DEGRADED",
         "service": "FactorySmart AI - Supplier Intelligence API",
         "timestamp": datetime.utcnow().isoformat() + "Z",
-        "models_ready": {
-            "batch_risk_classifier": registry.batch_classifier is not None,
-            "downstream_impact_forecaster": registry.impact_forecaster is not None,
-            "adaptive_parameter_compensator": registry.adaptive_compensator is not None,
-            "trend_analyzer": registry.trend_analyzer is not None,
-            "warranty_trace_engine": registry.trace_engine is not None,
-            "tolerance_gap_analyzer": registry.gap_analyzer is not None,
-            "scar_generator": registry.scar_generator is not None,
-        },
+        "models_ready": models_ready,
         "loaded_catalogs": {
             "products_catalog": len(registry.products_catalog_df) if registry.products_catalog_df is not None else 0,
             "material_batches_master": len(registry.batch_master_df) if registry.batch_master_df is not None else 0,
@@ -426,7 +455,8 @@ def forecast_impact(request: DownstreamForecastRequest, client: Dict[str, Any] =
     res = registry.impact_forecaster.forecast(
         hardness=request.material_hardness_hv,
         tensile=request.tensile_strength_mpa,
-        supplier_id=request.supplier_id
+        supplier_id=request.supplier_id,
+        batch_size_units=request.batch_size_units,
     )
 
     scrap_units = res["expected_scrap_count"]
@@ -439,6 +469,7 @@ def forecast_impact(request: DownstreamForecastRequest, client: Dict[str, Any] =
         projected_scrap_rate_pct=scrap_rate,
         likely_downstream_failure_mode=res["likely_downstream_failure_mode"],
         physical_root_cause=res["physical_root_cause"],
+        failure_mode_method=res["failure_mode_method"],
         projected_scrap_cost_usd=scrap_cost
     )
 
@@ -461,12 +492,12 @@ def get_adaptive_recipe(request: AdaptiveRecipeRequest, client: Dict[str, Any] =
     return AdaptiveRecipeResponse(
         recipe_status=res.get("status", "STANDARD_NOMINAL"),
         target_torque_offset_nm=res.get("torque_offset_nm", 0.0),
-        shutoff_angle_offset_deg=res.get("shutoff_angle_offset_deg", 0.0),
-        spindle_speed_reduction_pct=res.get("spindle_speed_reduction_pct", 0.0),
+        shutoff_angle_offset_deg=res.get("angle_offset_deg", 0.0),
+        spindle_speed_reduction_pct=abs(res.get("spindle_speed_offset_pct", 0.0)),
         feed_rate_offset_pct=res.get("feed_rate_offset_pct", 0.0),
-        lubricant_boost_mode=res.get("lubricant_boost", "STANDARD_COOLANT"),
+        lubricant_boost_mode=res.get("coolant_lubrication_mode", "STANDARD_COOLANT"),
         expected_scrap_reduction_pct=scrap_cut,
-        engineering_justification=res.get("notes", "Nominal material properties; apply standard baseline recipe.")
+        engineering_justification=res.get("engineering_guidance", "Nominal material properties; apply standard baseline recipe.")
     )
 
 @supplier_router.post("/comprehensive-qc", response_model=ComprehensiveLotQCResponse, summary="Unified Pre-Shipment / Receiving QC Audit (Q5 + Q6 + Q7)")
@@ -505,7 +536,10 @@ def comprehensive_lot_qc(request: ComprehensiveLotQCRequest, client: Dict[str, A
     recipe_res = get_adaptive_recipe(recipe_req, client)
 
     # Overall Verdict
-    if eval_res.is_in_tolerance_leakage_zone:
+    if not eval_res.passed_nominal_spec:
+        verdict = "OUT_OF_SPEC_REJECT"
+        advice = "Reject or quarantine the lot: material hardness is outside the receiving specification."
+    elif eval_res.is_in_tolerance_leakage_zone:
         verdict = "MARGINAL_LEAKAGE_RISK_COMPENSATION_MANDATORY"
         advice = "Lot is accepted under concession ONLY if factory controllers apply the returned adaptive torque and angle recipe."
     elif eval_res.downstream_risk_probability > 0.5:
@@ -587,15 +621,17 @@ def predict_product_lead_time(request: LeadTimePredictionRequest, client: Dict[s
     match = df[df["supplier_id"] == request.supplier_id]
     if request.sku:
         sku_match = match[match["sku"] == request.sku]
-        if not sku_match.empty:
-            match = sku_match
-    
+        if sku_match.empty:
+            raise HTTPException(
+                status_code=404,
+                detail=f"SKU '{request.sku}' was not found for supplier '{request.supplier_id}'.",
+            )
+        match = sku_match
+
     if match.empty:
-        avg_delay = 5
-        status_label = "Moderate Delay"
-    else:
-        avg_delay = int(round(match["delay_days"].mean()))
-        status_label = str(match["status"].iloc[0])
+        raise HTTPException(status_code=404, detail=f"No catalog records found for supplier '{request.supplier_id}'.")
+    avg_delay = int(round(match["delay_days"].mean()))
+    status_label = str(match["status"].iloc[0])
 
     predicted_lead = request.target_lead_days + avg_delay
     risk_class = "CRITICAL_BOTTLENECK" if avg_delay >= 7 else ("MODERATE_RISK" if avg_delay >= 3 else "ON_TIME_LOW_RISK")
@@ -614,7 +650,11 @@ def predict_product_lead_time(request: LeadTimePredictionRequest, client: Dict[s
         predicted_delay_days=avg_delay,
         delivery_status=status_label,
         risk_classification=risk_class,
-        recommended_procurement_action=action
+        recommended_procurement_action=action,
+        estimation_method=(
+            "Historical catalog delay average for the matched supplier/SKU; "
+            "monthly volume is not modeled because no trained volume-sensitive lead-time model is available."
+        ),
     )
 
 @supplier_router.post("/inventory/safety-stock", response_model=SafetyStockResponse, summary="Calculate Optimized Safety Stock Buffer")
@@ -670,7 +710,10 @@ def trace_batch(batch_id: str, client: Dict[str, Any] = Depends(get_current_clie
     """Returns all warranty claims, dollar costs, and affected serial numbers tied to a supplier batch."""
     if not registry.trace_engine:
         raise HTTPException(status_code=500, detail="Trace engine not loaded.")
-    return registry.trace_engine.trace_batch(batch_id)
+    result = registry.trace_engine.trace_batch(batch_id)
+    if result["supplier_id"] == "UNKNOWN":
+        raise HTTPException(status_code=404, detail=f"Batch '{batch_id}' was not found.")
+    return result
 
 @supplier_router.get("/tolerance-gap", summary="Receiving Inspection vs. Warranty Gap Analysis (Q10)")
 def get_tolerance_gap_analysis(client: Dict[str, Any] = Depends(get_current_client)):
@@ -689,11 +732,8 @@ def get_scar_document(supplier_id: str, client: Dict[str, Any] = Depends(get_cur
     containing an itemized financial demand for in-plant scrap, chargebacks, and warranty costs.
     """
     supp_id_upper = supplier_id.upper()
-    scar_path = os.path.join(PROJECT_ROOT, "reports", "scar_reports", f"{supp_id_upper}_SCAR.json")
-    if os.path.exists(scar_path):
-        with open(scar_path, "r") as f:
-            return json.load(f)
-    
+    if supp_id_upper not in {"VENDOR_A", "VENDOR_B", "VENDOR_C"}:
+        raise HTTPException(status_code=404, detail=f"Supplier '{supplier_id}' was not found.")
     if registry.scar_generator:
         return registry.scar_generator.generate_scar(supp_id_upper)
     

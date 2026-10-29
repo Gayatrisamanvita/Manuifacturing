@@ -192,6 +192,8 @@ Generates machine controller recipe offsets to safely process marginal material 
 | `POST`| `/api/v1/supplier/products/predict-lead-time` | Predicts delivery delay days and bottleneck risk based on SKU and volume. |
 | `POST`| `/api/v1/supplier/inventory/safety-stock` | Computes dynamic safety stock units ($SS$) and reorder points. |
 
+The lead-time endpoint currently uses historical catalog delay averages for the matched supplier/SKU. It is not a trained lead-time ML model, and the supplied monthly volume is not used in the estimate; this limitation is returned in `estimation_method`. An unknown supplier/SKU returns `404` rather than an invented fallback prediction. The checked-in supplier quality records are historical snapshots through their `data_as_of` date, not a live rolling 30-day series.
+
 ---
 
 ### 3.3 Warranty Forensics, Tolerance Gap & 8D SCAR
@@ -315,4 +317,3 @@ Administrators using `fs-admin-master-2026-99x` can manage keys dynamically:
 - **`GET /api/v1/supplier/auth/keys`**: Lists all active keys, roles, and real-time request counts.
 - **`DELETE /api/v1/supplier/auth/revoke-key/{key_or_id}`**: Revokes an existing key immediately.
 - **`GET /api/v1/supplier/auth/whoami`**: Returns identity and usage profile of the calling key.
-

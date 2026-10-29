@@ -87,14 +87,29 @@ class MarginalBatchRiskClassifier:
 
         X = row[self.feature_names]
         risk_prob = float(self.model.predict_proba(X)[0, 1])
+        hardness = float(row["material_hardness_hv"].iloc[0])
+        lower_limit = float(row["lower_spec_limit"].iloc[0])
+        upper_limit = float(row["upper_spec_limit"].iloc[0])
+        passed_inspection = lower_limit <= hardness <= upper_limit
 
-        status = "HIGH_RISK_MARGINAL" if risk_prob >= 0.6 else ("BORDERLINE_MONITOR" if risk_prob >= 0.3 else "STANDARD_PASS")
+        if not passed_inspection:
+            status = "OUT_OF_SPEC_REJECT"
+            recommendation = "Reject or quarantine lot: hardness is outside receiving specification"
+        elif risk_prob >= 0.6:
+            status = "HIGH_RISK_MARGINAL"
+            recommendation = "Apply adaptive recipe compensation before feeding to line"
+        elif risk_prob >= 0.3:
+            status = "BORDERLINE_MONITOR"
+            recommendation = "Apply adaptive recipe compensation before feeding to line"
+        else:
+            status = "STANDARD_PASS"
+            recommendation = "Standard line feed"
 
         return {
             "downstream_risk_probability": round(risk_prob, 4),
             "batch_risk_tier": status,
-            "passed_receiving_inspection": True,  # nominally inside 180-230 HV
-            "recommendation": "Apply adaptive recipe compensation before feeding to line" if risk_prob >= 0.3 else "Standard line feed"
+            "passed_receiving_inspection": passed_inspection,
+            "recommendation": recommendation
         }
 
     def save(self, filepath: str):
@@ -119,9 +134,12 @@ class DownstreamImpactForecaster:
         self.severity_regressor = GradientBoostingRegressor(n_estimators=80, random_state=42)
         self.scrap_regressor = GradientBoostingRegressor(n_estimators=80, random_state=42)
         self.features: List[str] = []
+        self.reference_batch_size: Optional[float] = None
 
     def fit(self, batch_summary_df: pd.DataFrame):
         df = batch_summary_df.copy()
+        if "total_parts" in df.columns and not df["total_parts"].empty:
+            self.reference_batch_size = float(df["total_parts"].mean())
         supplier_dummies = pd.get_dummies(df["supplier_id"], prefix="supplier", dtype=float)
 
         feature_cols = ["material_hardness_hv", "tensile_strength_mpa"]
@@ -134,7 +152,13 @@ class DownstreamImpactForecaster:
         self.severity_regressor.fit(X, y_sev)
         self.scrap_regressor.fit(X, y_scrap)
 
-    def forecast(self, hardness: float, tensile: float, supplier_id: str = "VENDOR_A") -> Dict[str, Any]:
+    def forecast(
+        self,
+        hardness: float,
+        tensile: float,
+        supplier_id: str = "VENDOR_A",
+        batch_size_units: Optional[int] = None,
+    ) -> Dict[str, Any]:
         row = pd.DataFrame([{
             "material_hardness_hv": hardness,
             "tensile_strength_mpa": tensile,
@@ -146,6 +170,15 @@ class DownstreamImpactForecaster:
 
         pred_sev = float(self.severity_regressor.predict(X)[0])
         pred_scrap = float(self.scrap_regressor.predict(X)[0])
+        if batch_size_units is not None:
+            if batch_size_units < 1:
+                raise ValueError("batch_size_units must be at least 1.")
+            if not self.reference_batch_size or self.reference_batch_size <= 0:
+                raise RuntimeError("Reference batch size is unavailable; refit the impact forecaster.")
+            pred_scrap *= batch_size_units / self.reference_batch_size
+        expected_scrap = max(0, int(round(pred_scrap)))
+        if batch_size_units is not None:
+            expected_scrap = min(batch_size_units, expected_scrap)
 
         # Predicted likely failure mode based on physical regime
         if hardness >= 218.0:
@@ -160,10 +193,11 @@ class DownstreamImpactForecaster:
 
         return {
             "expected_defect_severity": round(max(1.0, min(5.0, pred_sev)), 2),
-            "expected_scrap_count": max(0, int(round(pred_scrap))),
+            "expected_scrap_count": expected_scrap,
             "likely_downstream_failure_mode": likely_mode,
             "physical_root_cause": root_cause,
-            "projected_cost_usd": round(pred_scrap * 55.0, 2)  # ~$55 unit scrap cost
+            "failure_mode_method": "HARDNESS_THRESHOLD_RULES",
+            "projected_cost_usd": round(expected_scrap * 55.0, 2)
         }
 
     def save(self, filepath: str):
@@ -172,7 +206,8 @@ class DownstreamImpactForecaster:
             pickle.dump({
                 "severity_regressor": self.severity_regressor,
                 "scrap_regressor": self.scrap_regressor,
-                "features": self.features
+                "features": self.features,
+                "reference_batch_size": self.reference_batch_size,
             }, f)
 
     def load(self, filepath: str):
@@ -181,6 +216,7 @@ class DownstreamImpactForecaster:
             self.severity_regressor = data["severity_regressor"]
             self.scrap_regressor = data["scrap_regressor"]
             self.features = data["features"]
+            self.reference_batch_size = data.get("reference_batch_size")
 
 
 class AdaptiveParameterCompensator:
@@ -204,7 +240,6 @@ class AdaptiveParameterCompensator:
         Low hardness requires gentle torque ramp-up to prevent thread stripping.
         """
         delta_hardness = batch_hardness_hv - self.nominal_hardness
-        delta_tensile = batch_tensile_mpa - self.nominal_tensile
 
         if delta_hardness > 10.0:  # Borderline High (e.g. 215 - 228 HV)
             # Increase torque limit threshold slightly to prevent premature shutoff
@@ -244,6 +279,8 @@ class AdaptiveParameterCompensator:
         return {
             "status": status,
             "material_hardness_hv": batch_hardness_hv,
+            "tensile_strength_mpa": batch_tensile_mpa,
+            "tensile_adjustment_applied": False,
             "hardness_deviation_from_nominal": round(delta_hardness, 2),
             "prescribed_torque_target_nm": round(self.nominal_torque + torque_offset, 2),
             "prescribed_shutoff_angle_deg": round(self.nominal_shutoff_angle + angle_offset, 1),
@@ -252,7 +289,10 @@ class AdaptiveParameterCompensator:
             "spindle_speed_offset_pct": -speed_reduction_pct,
             "feed_rate_offset_pct": feed_rate_offset_pct,
             "coolant_lubrication_mode": lubricant_boost,
-            "engineering_guidance": notes
+            "engineering_guidance": (
+                f"{notes} Offsets are based on hardness; tensile strength is recorded but has no "
+                "independent offset because no validated tensile-to-recipe mapping is available."
+            )
         }
 
     def save(self, filepath: str):

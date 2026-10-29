@@ -192,7 +192,11 @@ class FailureModeClassifier:
                     "feature": feature_name,
                     "value": round(feat_val, 2),
                     "shap_impact": round(shap_val, 4),
-                    "direction": "RISK_INFLATING" if shap_val > 0 else "PROTECTIVE"
+                    "direction": (
+                        "PROTECTIVE" if shap_val > 0 else "RISK_INFLATING"
+                    ) if label in {"NONE", "NORMAL"} else (
+                        "RISK_INFLATING" if shap_val > 0 else "PROTECTIVE"
+                    )
                 })
 
             results.append({

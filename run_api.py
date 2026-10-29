@@ -3,9 +3,9 @@ Master Launcher for Manufacturing & Supplier Intelligence Suite (FactorySmart AI
 
 Usage:
     python run_api.py                   # Launches Streamlit UI on port 8501 & opens browser
-                                        # (also runs FastAPI backend on port 8000)
+                                        # (also runs FastAPI backend on port 8001)
     python run_api.py --mode streamlit  # Launches only the Streamlit Dashboard
-    python run_api.py --mode api        # Launches only the FastAPI Backend on port 8000
+    python run_api.py --mode api        # Launches only the FastAPI Backend on port 8001
     python run_api.py --mode supplier   # Launches Standalone Supplier Microservice on port 8001
 """
 
@@ -30,9 +30,9 @@ BANNER = r"""
 ================================================================================
   Full-Stack Operational Suite:
     - Streamlit Executive Quality Dashboard  : http://localhost:8501
-    - FastAPI REST Inference Backend         : http://localhost:8000
-    - Interactive Swagger API Documentation  : http://localhost:8000/docs
-    - System Health & Diagnostics            : http://localhost:8000/health
+    - FastAPI REST Inference Backend         : http://localhost:8001
+    - Interactive Swagger API Documentation  : http://localhost:8001/docs
+    - System Health & Diagnostics            : http://localhost:8001/health
 ================================================================================
   Tiers Active:
     [Tier 1] Supplier & Vendor Level (30-Day Trends, Defect Leakage, 8D SCAR)
@@ -213,7 +213,7 @@ def main():
     parser = argparse.ArgumentParser(description="FactorySmart AI Master Launcher")
     parser.add_argument("--host", default="0.0.0.0", help="Bind network interface (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=8501, help="Streamlit Dashboard port (default: 8501)")
-    parser.add_argument("--api-port", type=int, default=8000, help="FastAPI backend port (default: 8000)")
+    parser.add_argument("--api-port", type=int, default=8001, help="FastAPI backend port (default: 8001)")
     parser.add_argument("--mode", choices=["all", "streamlit", "api", "unified", "supplier"], default="all",
                         help="Launch mode: 'all' (Streamlit + FastAPI, default), 'streamlit', 'api', or 'supplier'")
     parser.add_argument("--no-browser", action="store_true", default=False, help="Do not automatically open web browser")
@@ -263,6 +263,7 @@ def main():
 
         # 2. Launch Streamlit (for 'all' and 'streamlit' modes)
         if args.mode in ["all", "streamlit"]:
+            os.environ.setdefault("MANUFACTURING_API_URL", f"http://127.0.0.1:{api_port}")
             if not args.no_browser:
                 threading.Thread(
                     target=open_browser_delayed,

@@ -18,7 +18,7 @@
         <div class="logo-orb" id="brand-logo" aria-hidden="true">⚡</div>
         <div class="brand-text">
           <h1 id="app-title">PrecisionPulse AI™ Intelligence Suite</h1>
-          <p id="app-subtitle">Manufacturing Operations • Raw Materials • Supplier Quality & SCAR Recovery</p>
+          <p id="app-subtitle">Supplier • Raw Material • Manufacturing • Production Intelligence</p>
         </div>
       </div>
       <div class="header-status">
@@ -29,6 +29,9 @@
         <div class="badge badge-neutral" id="badge-model-accuracy">
           <span>Classifier Acc: <strong>99.69%</strong></span>
         </div>
+        <a class="header-api-link" href="/docs" target="_blank" rel="noopener noreferrer">
+          <span aria-hidden="true">↗</span> API Reference
+        </a>
       </div>
     </header>
 
@@ -45,89 +48,35 @@
     </div>
 
     <!-- Navigation Tabs -->
-    <nav class="nav-tabs" aria-label="Main Navigation">
-      <button class="nav-tab-btn active" id="tab-btn-overview" onclick="switchTab('tab-overview')">
-        <span>📊</span> Executive Overview & Recovery
+    <nav class="nav-tabs" aria-label="Manufacturing intelligence levels">
+      <button class="nav-tab-btn active" id="tab-btn-tier3" aria-controls="tab-tier3" aria-current="page" onclick="switchTab('tab-tier3')">
+        <span class="level-number">01</span>
+        <span class="level-copy"><span class="level-name">Supplier Level</span><span class="level-detail">Quality &amp; recovery</span></span>
       </button>
-      <button class="nav-tab-btn" id="tab-btn-tier1" onclick="switchTab('tab-tier1')">
-        <span>⚙️</span> Tier 1: Manufacturing & Drift
+      <button class="nav-tab-btn" id="tab-btn-tier2" aria-controls="tab-tier2" onclick="switchTab('tab-tier2')">
+        <span class="level-number">02</span>
+        <span class="level-copy"><span class="level-name">Raw Material Level</span><span class="level-detail">Incoming quality &amp; risk</span></span>
       </button>
-      <button class="nav-tab-btn" id="tab-btn-tier2" onclick="switchTab('tab-tier2')">
-        <span>🔬</span> Tier 2: Material Intelligence
+      <button class="nav-tab-btn" id="tab-btn-tier1" aria-controls="tab-tier1" onclick="switchTab('tab-tier1')">
+        <span class="level-number">03</span>
+        <span class="level-copy"><span class="level-name">Manufacturing Level</span><span class="level-detail">Equipment &amp; process</span></span>
       </button>
-      <button class="nav-tab-btn" id="tab-btn-tier3" onclick="switchTab('tab-tier3')">
-        <span>📑</span> Tier 3: Supplier & SCAR Suite
+      <button class="nav-tab-btn" id="tab-btn-overview" aria-controls="tab-overview" onclick="switchTab('tab-overview')">
+        <span class="level-number">04</span>
+        <span class="level-copy"><span class="level-name">Production Level</span><span class="level-detail">Output &amp; performance</span></span>
       </button>
     </nav>
-
-    <!-- Digital Twin Factory Floor Line (Accessible across all tabs) -->
-    <section class="factory-floor" id="section-factory-floor" aria-labelledby="heading-factory-floor">
-      <div class="factory-floor-title">
-        <h2 id="heading-factory-floor" style="font-family: var(--font-heading); font-size: 15px; font-weight: 700; color: #ffffff; display: flex; align-items: center; gap: 8px;">
-          <span>🏭</span> Factory Digital Twin — Active Assembly Line Telemetry
-        </h2>
-        <span class="badge badge-neutral">Active Shift: <strong>SHIFT_1</strong> • Cycle Rate: 47.2 UPM</span>
-      </div>
-      <div class="station-track">
-        <!-- Station 10 -->
-        <div class="station-node" id="node-ST-10" onclick="selectStation('ST-10')">
-          <div class="station-node-header">
-            <span class="station-node-id">Station ST-10</span>
-            <span class="station-beacon beacon-amber" title="Status: Elevated Risk"></span>
-          </div>
-          <div class="station-node-role">Pre-Fastening Alignment</div>
-          <div class="station-node-stats">
-            <span>Pred. Defects: <strong>63.4</strong></span>
-            <span>Spindle: <strong>55.1°C</strong></span>
-          </div>
-        </div>
-
-        <!-- Station 20 -->
-        <div class="station-node active-station" id="node-ST-20" onclick="selectStation('ST-20')">
-          <div class="station-node-header">
-            <span class="station-node-id">Station ST-20</span>
-            <span class="station-beacon beacon-red" title="Status: High Risk Drift"></span>
-          </div>
-          <div class="station-node-role">Main High-Torque Rundown</div>
-          <div class="station-node-stats">
-            <span>Pred. Defects: <strong class="text-rose">64.4 (#1)</strong></span>
-            <span>Torque: <strong class="text-cyan">13.4 Nm</strong></span>
-          </div>
-        </div>
-
-        <!-- Station 30 -->
-        <div class="station-node" id="node-ST-30" onclick="selectStation('ST-30')">
-          <div class="station-node-header">
-            <span class="station-node-id">Station ST-30</span>
-            <span class="station-beacon beacon-red" title="Status: High Risk Drift"></span>
-          </div>
-          <div class="station-node-role">Torque Inspection & Seating</div>
-          <div class="station-node-stats">
-            <span>Pred. Defects: <strong class="text-rose">64.2 (#2)</strong></span>
-            <span>Wear: <strong class="text-amber">52%</strong></span>
-          </div>
-        </div>
-
-        <!-- Station 40 -->
-        <div class="station-node" id="node-ST-40" onclick="selectStation('ST-40')">
-          <div class="station-node-header">
-            <span class="station-node-id">Station ST-40</span>
-            <span class="station-beacon beacon-green" title="Status: Normal Operations"></span>
-          </div>
-          <div class="station-node-role">Final Dimensional Verification</div>
-          <div class="station-node-stats">
-            <span>Pred. Defects: <strong>63.4</strong></span>
-            <span>Vibration: <strong>1.4g</strong></span>
-          </div>
-        </div>
-      </div>
-    </section>
 
     <!-- ============================================================== -->
     <!-- TAB 1: EXECUTIVE OVERVIEW -->
     <!-- ============================================================== -->
     <main>
-      <section id="tab-overview" class="tab-content active" aria-labelledby="tab-btn-overview">
+      <section id="tab-overview" class="tab-content" aria-labelledby="tab-btn-overview">
+        <div class="level-intro">
+          <span class="level-kicker">LEVEL 04 · PRODUCTION</span>
+          <h2>Production performance</h2>
+          <p>Monitor shift output, station risk, quality performance, and recovery priorities.</p>
+        </div>
         <!-- 4 Top KPI Cards -->
         <div class="grid-cards-4">
           <div class="card stat-card" id="kpi-financial-claim">
@@ -155,6 +104,17 @@
             <div class="stat-subtext text-muted">ST-10, ST-20, ST-30, ST-40 (3 Shifts)</div>
           </div>
         </div>
+
+        <article class="card production-summary">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title"><span>🏭</span> Production output overview</h2>
+              <div class="card-subtitle">Recorded production, quality, and line performance across manufacturing stations.</div>
+            </div>
+          </div>
+          <div class="production-metrics" id="production-metrics" aria-live="polite"></div>
+          <div class="production-station-grid" id="production-stations" aria-live="polite"></div>
+        </article>
 
         <!-- 2 Column: Financial Recovery Table & Station Risk Chart -->
         <div class="grid-2">
@@ -325,6 +285,37 @@
       <!-- TAB 2: TIER 1 MANUFACTURING & DRIFT SIMULATOR -->
       <!-- ============================================================== -->
       <section id="tab-tier1" class="tab-content" aria-labelledby="tab-btn-tier1">
+        <div class="level-intro">
+          <span class="level-kicker">LEVEL 03 · MANUFACTURING</span>
+          <h2>Manufacturing process intelligence</h2>
+          <p>Explore finished products, inspect their production genealogy, detect process drift, and review recommended actions.</p>
+        </div>
+        <article class="card finished-product-explorer" id="finished-product-explorer">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title"><span>📦</span> Finished product inspection &amp; traceability</h2>
+              <div class="card-subtitle">Select a manufactured part to review inspection, process, and material genealogy.</div>
+            </div>
+          </div>
+          <div class="finished-product-controls">
+            <label class="analysis-field">
+              <span class="control-label">Find finished part by serial number</span>
+              <span class="search-control">
+                <input id="finished-product-search" type="search" placeholder="Search part serial number">
+                <button class="btn-secondary" type="button" onclick="searchFinishedProducts()">Search</button>
+              </span>
+            </label>
+            <label class="analysis-field">
+              <span class="control-label">Select manufactured product</span>
+              <select id="finished-product-select" class="analysis-select" onchange="loadFinishedProductDetails(this.value)">
+                <option value="">Loading finished products…</option>
+              </select>
+            </label>
+          </div>
+          <div class="analysis-results" id="finished-product-details" aria-live="polite">
+            <p class="empty-state">Loading production and inspection records…</p>
+          </div>
+        </article>
         <!-- Preset Scenarios Quick Bar -->
         <div class="preset-bar">
           <span style="font-size: 13px; font-weight: 600; color: var(--text-muted);">Quick-Test Operational Presets:</span>
@@ -490,6 +481,42 @@
       <!-- TAB 3: TIER 2 MATERIAL INTELLIGENCE & COMPENSATION -->
       <!-- ============================================================== -->
       <section id="tab-tier2" class="tab-content" aria-labelledby="tab-btn-tier2">
+        <div class="level-intro">
+          <span class="level-kicker">LEVEL 02 · RAW MATERIAL</span>
+          <h2>Raw material quality</h2>
+          <p>Evaluate incoming batches and understand their downstream production impact.</p>
+        </div>
+        <article class="card material-risk-explorer">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title"><span>🚨</span> Highest-risk raw material lots</h2>
+              <div class="card-subtitle">Risk-ranked incoming lots with hardness, scrap, and supplier context.</div>
+            </div>
+            <span class="badge badge-neutral" id="material-batch-count">Loading lots…</span>
+          </div>
+          <div class="risk-list" id="high-risk-materials" aria-live="polite">
+            <p class="empty-state">Loading material lot risk…</p>
+          </div>
+          <label class="analysis-field material-lot-picker">
+            <span class="control-label">Select a raw material lot for analysis</span>
+            <select id="material-lot-select" class="analysis-select" onchange="selectMaterialLot(this.value)">
+              <option value="">Loading material lots…</option>
+            </select>
+          </label>
+          <div class="analysis-results" id="material-lot-details" aria-live="polite">
+            <p class="empty-state">Select a lot to inspect its measurements and quality history.</p>
+          </div>
+          <div class="table-wrapper analysis-table-wrapper">
+            <table>
+              <thead>
+                <tr><th>Risk</th><th>Material lot</th><th>Supplier</th><th>Hardness</th><th>Risk status</th><th>Scrap</th><th>Chargeback</th></tr>
+              </thead>
+              <tbody id="all-materials-table">
+                <tr><td colspan="7">Loading all material lots…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
         <div class="grid-2">
           <!-- Marginal Batch Receiving QC Evaluator (Q5) -->
           <article class="card" id="card-material-evaluator">
@@ -626,65 +653,49 @@
       <!-- TAB 4: TIER 3 SUPPLIER QUALITY & SCAR RECOVERY -->
       <!-- ============================================================== -->
       <section id="tab-tier3" class="tab-content" aria-labelledby="tab-btn-tier3">
-        <!-- 3 Supplier Cards (Q8) -->
-        <div class="grid-3">
-          <article class="card" id="card-vendor-a">
-            <div class="card-header">
-              <div>
-                <h3 class="card-title">VENDOR A</h3>
-                <div class="card-subtitle">Fastener Bar Stock • 367 Claims</div>
-              </div>
-              <span class="badge" style="background: rgba(239, 68, 68, 0.15); color: #f87171;">HIGH RISK</span>
-            </div>
-            <div style="margin-bottom: 12px;">
-              <div style="font-size: 12px; color: var(--text-muted);">Current Defect Rate: <strong class="text-rose font-mono">5.68%</strong></div>
-              <div style="font-size: 12px; color: var(--text-muted);">Top Defect Mode: <strong>SURFACE_FLAW</strong></div>
-              <div style="font-size: 12px; color: var(--text-muted);">CAPA Recurrence Count: <strong class="text-amber">28 events</strong></div>
-            </div>
-            <div style="font-family: var(--font-heading); font-size: 22px; font-weight: 800; color: #ffffff; margin-bottom: 12px;">
-              $1,785,720 Demand
-            </div>
-            <button class="btn-primary" onclick="openSCAR('VENDOR_A')">Generate SCAR 8D</button>
-          </article>
-
-          <article class="card" id="card-vendor-b">
-            <div class="card-header">
-              <div>
-                <h3 class="card-title">VENDOR B</h3>
-                <div class="card-subtitle">Cold Drawn Structural • 476 Claims</div>
-              </div>
-              <span class="badge" style="background: rgba(239, 68, 68, 0.15); color: #f87171;">CRITICAL</span>
-            </div>
-            <div style="margin-bottom: 12px;">
-              <div style="font-size: 12px; color: var(--text-muted);">Current Defect Rate: <strong class="text-rose font-mono">12.85%</strong></div>
-              <div style="font-size: 12px; color: var(--text-muted);">Top Defect Mode: <strong>INCOMPLETE_FASTENING</strong></div>
-              <div style="font-size: 12px; color: var(--text-muted);">CAPA Recurrence Count: <strong class="text-amber">28 events</strong></div>
-            </div>
-            <div style="font-family: var(--font-heading); font-size: 22px; font-weight: 800; color: #ffffff; margin-bottom: 12px;">
-              $2,333,800 Demand
-            </div>
-            <button class="btn-primary" onclick="openSCAR('VENDOR_B')">Generate SCAR 8D</button>
-          </article>
-
-          <article class="card" id="card-vendor-c">
-            <div class="card-header">
-              <div>
-                <h3 class="card-title">VENDOR C</h3>
-                <div class="card-subtitle">High Strength Alloy • 272 Claims</div>
-              </div>
-              <span class="badge" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24;">ELEVATED</span>
-            </div>
-            <div style="margin-bottom: 12px;">
-              <div style="font-size: 12px; color: var(--text-muted);">Current Defect Rate: <strong class="text-emerald font-mono">2.59%</strong></div>
-              <div style="font-size: 12px; color: var(--text-muted);">Top Defect Mode: <strong>THREAD_WEAR</strong></div>
-              <div style="font-size: 12px; color: var(--text-muted);">CAPA Recurrence Count: <strong class="text-amber">30 events</strong></div>
-            </div>
-            <div style="font-family: var(--font-heading); font-size: 22px; font-weight: 800; color: #ffffff; margin-bottom: 12px;">
-              $1,326,605 Demand
-            </div>
-            <button class="btn-primary" onclick="openSCAR('VENDOR_C')">Generate SCAR 8D</button>
-          </article>
+        <div class="level-intro">
+          <span class="level-kicker">LEVEL 01 · SUPPLIER</span>
+          <h2>Supplier quality &amp; recovery</h2>
+          <p>Compare supplier performance, trace field claims, and generate corrective actions.</p>
         </div>
+        <article class="card supplier-product-explorer">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title"><span>🏢</span> Supplier &amp; product performance</h2>
+              <div class="card-subtitle">Choose a supplier, review its riskiest deliveries, then inspect each supplied product.</div>
+            </div>
+            <label class="analysis-field supplier-picker">
+              <span class="control-label">Select supplier</span>
+              <select id="supplier-select" class="analysis-select" onchange="selectSupplier(this.value)">
+                <option value="">Loading suppliers…</option>
+              </select>
+            </label>
+          </div>
+          <div class="risk-list" id="supplier-risk-products" aria-live="polite">
+            <p class="empty-state">Loading supplier products…</p>
+          </div>
+          <div class="supplier-product-detail">
+            <label class="analysis-field">
+              <span class="control-label">Select an individual supplied product</span>
+              <select id="supplier-product-select" class="analysis-select" onchange="selectSupplierProduct(this.value)">
+                <option value="">Select a supplier first</option>
+              </select>
+            </label>
+            <div class="analysis-results" id="supplier-product-analysis" aria-live="polite">
+              <p class="empty-state">Choose a supplier product to see its delivery and quality analysis.</p>
+            </div>
+          </div>
+          <div class="table-wrapper analysis-table-wrapper">
+            <table>
+              <thead>
+                <tr><th>Risk</th><th>Product / SKU</th><th>Category</th><th>Target lead</th><th>Actual lead</th><th>Delay</th><th>Quality</th></tr>
+              </thead>
+              <tbody id="supplier-products-table">
+                <tr><td colspan="7">Select a supplier to load its catalog.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
 
         <!-- 2 Column: Supplier Trend Chart & Tolerance Leakage Gap Chart -->
         <div class="grid-2">
@@ -781,6 +792,25 @@
 
           <div class="scar-dossier" id="scar-dossier-body">
             <!-- Dynamically populated 8D steps -->
+          </div>
+        </article>
+
+        <article class="card supplier-overall-analysis">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title"><span>🌐</span> Overall supplier / vendor analysis</h2>
+              <div class="card-subtitle">Portfolio-wide delivery, product risk, quality, and volume comparison.</div>
+            </div>
+          </div>
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr><th>Supplier</th><th>Defect rate</th><th>Top defect mode</th><th>CAPA recurrences</th><th>Products at risk</th><th>Avg. delay</th><th>Warranty claims</th><th>Financial impact</th><th>Most delayed product</th></tr>
+              </thead>
+              <tbody id="overall-supplier-table">
+                <tr><td colspan="9">Loading supplier portfolio analysis…</td></tr>
+              </tbody>
+            </table>
           </div>
         </article>
       </section>
