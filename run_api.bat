@@ -1,6 +1,6 @@
 @echo off
 REM =============================================================================
-REM FactorySmart AI - Launch Manufacturing Intelligence API
+REM FactorySmart AI - Launch Streamlit Dashboard & Intelligence API
 REM =============================================================================
 
 if exist "venv\Scripts\activate.bat" (
@@ -8,5 +8,6 @@ if exist "venv\Scripts\activate.bat" (
     call venv\Scripts\activate.bat
 )
 
-python run_api.py --port 8000
+python run_api.py
 pause
+
